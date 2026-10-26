@@ -1,6 +1,6 @@
 // Smart Hybrid API Bridge for AURA Music Studio (Desktop + Native Android APK)
 // 1. On Desktop/Browser: Uses local /api/* Studio Server directly.
-// 2. Inside Native Android APK: Connects to Studio Server (Wi-Fi/Hotspot/Tunnel) for Full-Track & FFmpeg 24-Bit FLAC,
+// 2. Inside Native Android APK: Connects to Studio Server (Wi-Fi/Hotspot/Tunnel) for full-track audio and conversion,
 //    and automatically falls back to Standalone Direct Cloud APIs (iTunes + LRCLIB + Offline IndexedDB) on 4G/5G!
 
 const DEFAULT_STUDIO_SERVER = 'http://10.150.197.246:3001';
@@ -92,16 +92,12 @@ export async function apiSearchTracks(query, mode = 'spotify') {
       releaseYear: item.releaseDate ? new Date(item.releaseDate).getFullYear() : 2025,
       duration: Math.floor((item.trackTimeMillis || 210000) / 1000),
       cover: coverHiRes,
-      audioUrl: item.previewUrl,
+      audioUrl: resolveStreamUrl(
+        `/api/stream?q=${encodeURIComponent(`${item.artistName} - ${item.trackName} official audio`)}`,
+        base
+      ) || item.previewUrl,
       previewUrl: item.previewUrl,
-      losslessInfo: {
-        available: true,
-        format: 'FLAC DSP',
-        bitDepth: 24,
-        sampleRate: '96.0 kHz',
-        bitrate: '1411 kbps',
-        source: 'Standalone Mobile Cloud + 96kHz DSP'
-      },
+      losslessInfo: { available: true, format: 'Direct Full Audio + 96kHz DSP' },
       sourceMode: mode
     };
   });
@@ -169,7 +165,7 @@ export async function apiWrappedSync({ track, spotifyAccessToken, activeMode, li
     artist: track?.artist || 'Unknown Artist',
     cover: track?.cover || '',
     spotifyUri: track?.spotifyUri || 'spotify:track:matched',
-    playedVia: activeMode === 'ytmusic' ? 'YouTube Music • Hi-Res' : 'Spotify • Hi-Res',
+    playedVia: activeMode === 'ytmusic' ? 'YouTube Music • source quality unverified' : 'Spotify catalog • source quality unverified',
     listenedSeconds: listenedSeconds || 215,
     wrappedCounted: true
   };

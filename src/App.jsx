@@ -56,7 +56,7 @@ const PlayingBars = ({ colorClass = 'bg-emerald-400' }) => (
 const CURATED_MIXES = [
   {
     id: 'mix_indo',
-    title: 'Nusantara Hi-Res',
+    title: 'Nusantara Mix',
     subtitle: 'Tulus, Mahalini, Bernadya, Hindia',
     query: 'Mahalini Tulus Bernadya',
     mode: 'spotify',
@@ -93,7 +93,7 @@ const CURATED_MIXES = [
 ];
 
 const EQ_PRESETS = {
-  'Hi-Res Reference': [2.5, 1.2, 0.0, 1.8, 3.2],
+  'Studio Reference': [2.5, 1.2, 0.0, 1.8, 3.2],
   'Harman Target': [3.5, 1.5, -0.5, 2.0, 2.5],
   'Deep Sub Bass': [5.0, 3.0, 0.0, 1.0, 1.5],
   'Vocal Crystal': [-0.5, 0.5, 2.5, 3.5, 2.0],
@@ -157,8 +157,8 @@ export default function App() {
       name: artistName,
       listeners: listeners.toLocaleString('id-ID'),
       rank,
-      bio: `${artistName} adalah salah satu kreator & produser musik paling aktif di Spotify dan YouTube Music. Dikenal dengan karya aransemen berkarakter dan audio mastering 24-Bit Hi-Res lossless.`,
-      genres: ['Indie Pop', 'Lossless Master', 'Acoustic / Remix', 'Pop Nusantara'],
+      bio: `${artistName} adalah salah satu kreator & produser musik paling aktif di Spotify dan YouTube Music.`,
+      genres: ['Indie Pop', 'Acoustic / Remix', 'Pop Nusantara'],
       cities: [
         { city: 'Jakarta, ID', count: `${Math.round(listeners * 0.35).toLocaleString('id-ID')} pendengar` },
         { city: 'Surabaya, ID', count: `${Math.round(listeners * 0.22).toLocaleString('id-ID')} pendengar` },
@@ -205,9 +205,9 @@ export default function App() {
   const [isExtendingQueue, setIsExtendingQueue] = useState(false);
 
   // Lossless & EQ State
-  const [isLosslessEnabled, setIsLosslessEnabled] = useState(true);
-  const [activePreset, setActivePreset] = useState('Hi-Res Reference');
-  const [eqGains, setEqGains] = useState(EQ_PRESETS['Hi-Res Reference']);
+  const [isEqEnabled, setIsEqEnabled] = useState(true);
+  const [activePreset, setActivePreset] = useState('Studio Reference');
+  const [eqGains, setEqGains] = useState(EQ_PRESETS['Studio Reference']);
   const [spectrumBars, setSpectrumBars] = useState(new Array(28).fill(10));
 
   // Live Lyrics State
@@ -250,7 +250,57 @@ export default function App() {
   const [serverUrlInput, setServerUrlInput] = useState(() => getStudioServerUrl());
 
   const audioRef = useRef(null);
+  const losslessFileRef = useRef(null);
   const animFrameRef = useRef(null);
+
+  const importLosslessFile = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    const extension = file.name.split('.').pop()?.toLowerCase();
+    let verifiedLossless = false;
+    if (extension === 'flac') {
+      const header = new Uint8Array(await file.slice(0, 4).arrayBuffer());
+      verifiedLossless = String.fromCharCode(...header) === 'fLaC';
+    } else if (extension === 'wav') {
+      const header = new DataView(await file.slice(0, 1024 * 1024).arrayBuffer());
+      if (header.byteLength >= 28 && header.getUint32(0, false) === 0x52494646 && header.getUint32(8, false) === 0x57415645) {
+        for (let offset = 12; offset + 16 <= header.byteLength;) {
+          const chunkId = header.getUint32(offset, false);
+          const chunkSize = header.getUint32(offset + 4, true);
+          if (chunkId === 0x666d7420) {
+            const codec = header.getUint16(offset + 8, true);
+            verifiedLossless = codec === 1 || codec === 3;
+            break;
+          }
+          if (!chunkSize) break;
+          offset += 8 + chunkSize + (chunkSize % 2);
+        }
+      }
+    }
+    if (!verifiedLossless) {
+      window.alert('File ini bukan FLAC yang valid atau WAV PCM. Coba file lossless lain.');
+      return;
+    }
+    const title = file.name.replace(/\.[^.]+$/, '');
+    const track = {
+      id: `local_${Date.now()}`,
+      title,
+      artist: 'File lokal',
+      album: 'Koleksi lokal',
+      duration: 0,
+      cover: '/icon.svg',
+      audioBlob: file,
+      localFileName: file.name,
+      localFormat: extension.toUpperCase(),
+      isLocalLossless: true,
+      audioUrl: ''
+    };
+    setTracks((previous) => [track, ...previous.filter((item) => !item.isLocalLossless)]);
+    setActiveFeedTitle('File Lossless Lokal');
+    setActiveView('discover');
+    await playTrack(track);
+  };
 
   const greeting = useMemo(() => {
     const h = new Date().getHours();
@@ -393,7 +443,7 @@ export default function App() {
     return () => cancelAnimationFrame(animFrameRef.current);
   }, [isPlaying, isBuffering]);
 
-  const fetchTracks = async (query, mode = sourceMode, customHeading = null, preserveView = false) => {
+  const fetchTracks = async (query, mode = sourceMode, customHeading = null, preserveView = false, autoPlay = false) => {
     setIsLoading(true);
     if (!preserveView) {
       setActiveView('discover');
@@ -405,7 +455,9 @@ export default function App() {
       const data = await apiSearchTracks(query, mode);
       if (data.results?.length) {
         setTracks(data.results);
-        if (!currentTrack) {
+        if (autoPlay) {
+          await playTrack(data.results[0]);
+        } else if (!currentTrack) {
           setCurrentTrack(data.results[0]);
           setDuration(data.results[0].duration || 215);
         }
@@ -424,7 +476,7 @@ export default function App() {
     fetchTracks(
       q,
       newMode,
-      newMode === 'ytmusic' ? 'YouTube Music • Hi-Res Stream' : 'Spotify Catalog • Hi-Res Master'
+      newMode === 'ytmusic' ? 'YouTube Music • kualitas sumber bervariasi' : 'Spotify Catalog • kualitas sumber bervariasi'
     );
   };
 
@@ -486,6 +538,11 @@ export default function App() {
       }
     }
 
+    const studioUrl = getStudioServerUrl();
+    if (playSrc && playSrc.startsWith('/api') && studioUrl) {
+      playSrc = `${studioUrl}${playSrc}`;
+    }
+
     audioRef.current.crossOrigin = 'anonymous';
     audioRef.current.src = playSrc;
     audioRef.current.volume = isMuted ? 0 : volume;
@@ -493,7 +550,8 @@ export default function App() {
     try {
       dspEngine.init(audioRef.current);
       dspEngine.resume();
-      dspEngine.setLosslessMode(isLosslessEnabled);
+      // Keep imported lossless files free from the app's preset EQ curve.
+      dspEngine.setEqEnabled(track.isLocalLossless ? false : isEqEnabled);
       await audioRef.current.play();
       if (startAtSeconds > 0 && audioRef.current) {
         audioRef.current.currentTime = Math.max(0, startAtSeconds - 0.5);
@@ -502,15 +560,7 @@ export default function App() {
       setIsBuffering(false);
       triggerSpotifyWrappedSync(track);
     } catch (err) {
-      // Fallback to preview stream if full stream fails
-      if (track.previewUrl && playSrc !== track.previewUrl) {
-        try {
-          audioRef.current.src = track.previewUrl;
-          await audioRef.current.play();
-          setIsPlaying(true);
-          triggerSpotifyWrappedSync(track);
-        } catch {}
-      }
+      console.warn('Direct stream playback note:', err);
       setIsBuffering(false);
     }
   };
@@ -619,7 +669,22 @@ export default function App() {
         const blobUrl = URL.createObjectURL(record.audioBlob);
         const a = document.createElement('a');
         a.href = blobUrl;
-        a.download = `${track.artist} - ${track.title} [24bit Hi-Res].flac`;
+        const audioType = record.audioBlob.type?.toLowerCase() || '';
+        const extensionByType = {
+          'audio/flac': 'flac',
+          'audio/x-flac': 'flac',
+          'audio/mp4': 'm4a',
+          'audio/mpeg': 'mp3',
+          'audio/ogg': 'ogg',
+          'audio/webm': 'webm',
+          'video/webm': 'webm',
+          'audio/wav': 'wav',
+          'audio/x-wav': 'wav'
+        };
+        const extension = extensionByType[audioType] || 'audio';
+        a.download = track.isLocalLossless
+          ? track.localFileName
+          : `${track.artist} - ${track.title}${extension === 'flac' ? ' [FLAC conversion; source unverified]' : ' [source quality unverified]'}.${extension}`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -873,21 +938,36 @@ export default function App() {
             <span>{uiTheme === 'pixel' ? '👾 Pixel TUI' : '💎 Studio Pro'}</span>
           </button>
 
-          {/* Lossless 24-Bit Master Badge */}
+          <input
+            ref={losslessFileRef}
+            type="file"
+            accept=".flac,.wav,audio/flac,audio/wav"
+            className="hidden"
+            onChange={importLosslessFile}
+          />
+          <button
+            onClick={() => losslessFileRef.current?.click()}
+            title="Putar file FLAC atau WAV PCM milikmu"
+            className="flex items-center gap-1.5 px-2 sm:px-2.5 h-8 rounded-full border border-amber-400/30 bg-amber-500/10 text-amber-300 text-[11px] font-semibold hover:bg-amber-500/20"
+          >
+            <Folder className="w-3.5 h-3.5" />
+            <span className="hidden md:inline">File Lossless</span>
+          </button>
+          {/* EQ control; this is audio processing, not a lossless quality badge. */}
           <button
             onClick={() => {
               setShowRightPanel(true);
               setRightTab('eq');
             }}
-            title="24-Bit / 96kHz Lossless Audio Engine"
+            title="Pengaturan equalizer audio"
             className={`hidden sm:flex items-center gap-1.5 px-2.5 h-8 rounded-full text-[11px] font-mono font-semibold border transition-all ${
-              isLosslessEnabled
+              isEqEnabled
                 ? 'bg-amber-500/10 border-amber-400/30 text-amber-300 hover:bg-amber-500/15'
                 : 'bg-zinc-900 border-white/5 text-zinc-500'
             }`}
           >
             <LosslessIcon className="w-4 h-3.5 text-amber-400" />
-            <span>HI-RES</span>
+            <span>EQ</span>
           </button>
 
           {/* Wrapped Bridge / Connect Spotify Account Pill */}
@@ -946,7 +1026,7 @@ export default function App() {
                 <Library className="w-4 h-4 text-zinc-400" />
                 <span>Koleksi Kamu</span>
               </div>
-              <span className="text-[11px] font-mono text-zinc-500">HI-RES</span>
+              <span className="text-[11px] font-mono text-zinc-500">AUDIO</span>
             </div>
 
             {/* Filter Chips */}
@@ -990,7 +1070,7 @@ export default function App() {
               </button>
             )}
 
-            {/* Pinned: Offline Hi-Res FLAC Vault */}
+            {/* Pinned: Offline audio library */}
             {(libraryFilter === 'all' || libraryFilter === 'offline') && (
               <button
                 onClick={() => setActiveView('offline')}
@@ -1002,7 +1082,7 @@ export default function App() {
                   <Download className="w-5 h-5 text-black stroke-[2.4]" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="text-[13px] font-semibold text-white truncate">Offline FLAC</p>
+                  <p className="text-[13px] font-semibold text-white truncate">Audio Offline</p>
                   <p className="text-xs text-amber-400/90 truncate">
                     Tersimpan di HP • {offlineTracks.length} lagu
                   </p>
@@ -1065,7 +1145,7 @@ export default function App() {
                   key={mix.id}
                   onClick={() => {
                     if (mix.mode !== sourceMode) setSourceMode(mix.mode);
-                    fetchTracks(mix.query, mix.mode, mix.title);
+                    fetchTracks(mix.query, mix.mode, mix.title, false, true);
                   }}
                   className="w-full flex items-center gap-3 p-2 rounded-xl text-left hover:bg-white/[0.04] transition-all"
                 >
@@ -1158,7 +1238,7 @@ export default function App() {
 
                       {/* 2. Viral Remix Pick (Emoji) */}
                       <div
-                        onClick={() => fetchTracks('TikTok Viral Remix 2026', sourceMode, 'Viral Remix & Edits')}
+                        onClick={() => fetchTracks('TikTok Viral Remix 2026', sourceMode, 'Viral Remix & Edits', false, true)}
                         className="group flex items-center justify-between bg-[#24283b] hover:bg-[#2d3149] border border-[#3b4261] rounded-lg overflow-hidden cursor-pointer transition-all pr-3"
                       >
                         <div className="flex items-center gap-3 min-w-0">
@@ -1173,7 +1253,7 @@ export default function App() {
 
                       {/* 3. Time Is Tearing Us Apart Radio */}
                       <div
-                        onClick={() => fetchTracks('Time Is Tearing Us Apart', sourceMode, 'Time Is Tearing Us Apart Radio')}
+                        onClick={() => fetchTracks('Time Is Tearing Us Apart', sourceMode, 'Time Is Tearing Us Apart Radio', false, true)}
                         className="group flex items-center justify-between bg-[#24283b] hover:bg-[#2d3149] border border-[#3b4261] rounded-lg overflow-hidden cursor-pointer transition-all pr-3"
                       >
                         <div className="flex items-center gap-3 min-w-0">
@@ -1206,7 +1286,7 @@ export default function App() {
 
                       {/* 5. You seem pretty sad */}
                       <div
-                        onClick={() => fetchTracks('you seem pretty sad for a girl so in love', sourceMode, 'Indie Melancholy')}
+                        onClick={() => fetchTracks('you seem pretty sad for a girl so in love', sourceMode, 'Indie Melancholy', false, true)}
                         className="group flex items-center justify-between bg-[#24283b] hover:bg-[#2d3149] border border-[#3b4261] rounded-lg overflow-hidden cursor-pointer transition-all pr-3"
                       >
                         <div className="flex items-center gap-3 min-w-0">
@@ -1223,7 +1303,7 @@ export default function App() {
 
                       {/* 6. Random Popular Songs */}
                       <div
-                        onClick={() => fetchTracks('Pop Hits Indonesia 2026', sourceMode, 'Random Popular Songs')}
+                        onClick={() => fetchTracks('Pop Hits Indonesia 2026', sourceMode, 'Random Popular Songs', false, true)}
                         className="group flex items-center justify-between bg-[#24283b] hover:bg-[#2d3149] border border-[#3b4261] rounded-lg overflow-hidden cursor-pointer transition-all pr-3"
                       >
                         <div className="flex items-center gap-3 min-w-0">
@@ -1240,7 +1320,7 @@ export default function App() {
 
                       {/* 7. Irgendwie, irgendwo, irgendwann */}
                       <div
-                        onClick={() => fetchTracks('Irgendwie irgendwo irgendwann', sourceMode, '80s Synth Dance Mix')}
+                        onClick={() => fetchTracks('Irgendwie irgendwo irgendwann', sourceMode, '80s Synth Dance Mix', false, true)}
                         className="group flex items-center justify-between bg-[#24283b] hover:bg-[#2d3149] border border-[#3b4261] rounded-lg overflow-hidden cursor-pointer transition-all pr-3"
                       >
                         <div className="flex items-center gap-3 min-w-0">
@@ -1303,7 +1383,7 @@ export default function App() {
                             cover: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=240&q=80'
                           },
                           {
-                            title: 'Tante Culik Aku Dong (Lossless)',
+                            title: 'Tante Culik Aku Dong (Remix)',
                             artist: 'Febri remix',
                             cover: '/febri-dove.png'
                           },
@@ -1320,7 +1400,7 @@ export default function App() {
                         ].map((rel, idx) => (
                           <div
                             key={idx}
-                            onClick={() => openArtistView(rel.artist)}
+                            onClick={() => fetchTracks(`${rel.artist} ${rel.title}`, sourceMode, rel.title, false, true)}
                             className="group p-2.5 rounded-xl bg-[#24283b] hover:bg-[#2d3149] border border-[#3b4261] transition-all cursor-pointer space-y-2"
                           >
                             <img
@@ -1359,7 +1439,7 @@ export default function App() {
                         {sourceMode === 'spotify' ? (
                           <>
                             <SpotifyIcon className="w-4 h-4 text-[#1DB954]" />
-                            <span>Spotify Hi-Res Engine</span>
+                            <span>Spotify Catalog</span>
                           </>
                         ) : (
                           <>
@@ -1395,7 +1475,7 @@ export default function App() {
                             <Download className="w-5 h-5 text-black stroke-[2.3]" />
                           </div>
                           <span className="font-bold text-xs sm:text-[13px] text-white truncate">
-                            Offline FLAC ({offlineTracks.length})
+                            Audio Offline ({offlineTracks.length})
                           </span>
                         </div>
                       </div>
@@ -1405,7 +1485,7 @@ export default function App() {
                           key={mix.id}
                           onClick={() => {
                             if (mix.mode !== sourceMode) setSourceMode(mix.mode);
-                            fetchTracks(mix.query, mix.mode, mix.title);
+                            fetchTracks(mix.query, mix.mode, mix.title, false, true);
                           }}
                           className="group flex items-center justify-between bg-white/[0.06] hover:bg-white/[0.12] rounded-lg overflow-hidden cursor-pointer transition-all pr-3"
                         >
@@ -1585,12 +1665,12 @@ export default function App() {
                     {activeView === 'liked' ? 'Koleksi Pribadi' : 'Penyimpanan Perangkat • Tanpa Kuota'}
                   </span>
                   <h1 className="text-3xl sm:text-5xl font-black tracking-tight text-white">
-                    {activeView === 'liked' ? 'Lagu Disukai' : 'Offline Hi-Res FLAC'}
+                    {activeView === 'liked' ? 'Lagu Disukai' : 'Audio Offline'}
                   </h1>
                   <p className="text-xs sm:text-sm text-zinc-400">
                     {activeView === 'liked'
                       ? `${likedTracks.length} lagu tersimpan • Otomatis tersinkron ke Spotify Wrapped`
-                      : `${offlineTracks.length} file FLAC 24-Bit siap diputar tanpa internet di HP & Desktop`}
+                      : `${offlineTracks.length} file audio tersimpan dan siap diputar tanpa internet`}
                   </p>
                 </div>
               </div>
@@ -1609,7 +1689,7 @@ export default function App() {
                       Spotify Wrapped Sync
                     </h1>
                     <p className="text-xs sm:text-sm text-zinc-400 max-w-2xl">
-                      Dengar lagu, live acoustic, atau remix dari YouTube Music maupun Offline FLAC tanpa takut ketinggalan Spotify Wrapped. Setiap pemutaran otomatis dicocokkan ke URI lagu Spotify kamu.
+                      Dengar lagu online atau file lokal. Kualitas stream online tidak diverifikasi, dan setiap pemutaran dicocokkan untuk log Spotify Wrapped.
                     </p>
                   </div>
                   <button
@@ -1833,13 +1913,13 @@ export default function App() {
                           : activeView === 'liked'
                           ? 'Daftar Lagu Disukai'
                           : activeView === 'offline'
-                          ? 'File FLAC Tersimpan'
+                          ? 'File audio tersimpan'
                           : activeView === 'artist'
                           ? `Daftar Lagu Populer: ${activeArtist}`
                           : 'Koleksi Lagu'}
                       </h2>
                       <p className="text-xs text-zinc-500 font-mono">
-                        Full-Length Stream • Real-Time 24-Bit/96kHz Lossless DSP
+                        Full-length stream • kualitas sumber mengikuti penyedia audio
                       </p>
                     </div>
                   </div>
@@ -1883,7 +1963,7 @@ export default function App() {
                     <p className="text-sm font-semibold text-zinc-300">Belum ada lagu di daftar ini</p>
                     <p className="text-xs text-zinc-500">
                       {activeView === 'offline'
-                        ? 'Klik ikon Download di sebelah kanan lagu mana saja untuk mengunduh file FLAC 24-Bit.'
+                        ? 'File audio tersimpan untuk diputar offline. Konversi FLAC tidak menambah kualitas yang tidak ada di sumber.'
                         : 'Klik ikon Hati pada lagu favoritmu untuk menyimpannya ke koleksi ini.'}
                     </p>
                   </div>
@@ -1935,9 +2015,11 @@ export default function App() {
                                 {track.title}
                               </p>
                               <div className="flex items-center gap-1.5 text-xs text-zinc-400 truncate">
-                                <span className="inline-flex items-center gap-0.5 px-1 py-[1px] rounded bg-amber-400/15 text-amber-300 text-[9px] font-mono font-bold shrink-0">
-                                  LOSSLESS
-                                </span>
+                                {track.isLocalLossless && (
+                                  <span className="inline-flex items-center gap-0.5 px-1 py-[1px] rounded bg-amber-400/15 text-amber-300 text-[9px] font-mono font-bold shrink-0">
+                                    {track.localFormat} FILE
+                                  </span>
+                                )}
                                 {savedOffline && (
                                   <span className="inline-flex items-center px-1 py-[1px] rounded bg-emerald-500/20 text-emerald-300 text-[9px] font-bold shrink-0">
                                     OFFLINE
@@ -2021,8 +2103,8 @@ export default function App() {
                                 onClick={(e) => handleDownloadOffline(track, true, e)}
                                 title={
                                   savedOffline
-                                    ? 'Tersimpan Offline (Klik untuk ekspor ulang .flac)'
-                                    : 'Download 24-Bit FLAC ke HP'
+                                    ? 'Tersimpan offline (klik untuk ekspor ulang)'
+                                    : 'Simpan audio untuk offline'
                                 }
                                 className={`p-1.5 rounded-full transition-opacity ${
                                   savedOffline
@@ -2131,20 +2213,20 @@ export default function App() {
                         <span>Audio Signal Path</span>
                       </span>
                       <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-400/15 text-amber-300 font-bold">
-                        24-BIT / 96KHZ
+                        Audio EQ
                       </span>
                     </div>
                     <div className="space-y-1.5 text-xs">
                       <div className="flex items-center justify-between text-zinc-400">
                         <span>Source Stream</span>
                         <span className="text-zinc-200 font-medium">
-                          {sourceMode === 'spotify' ? 'Spotify ISRC Master' : 'YT Music Opus 251'}
+                          {currentTrack?.isLocalLossless ? `${currentTrack.localFormat} file` : 'Online stream • unverified quality'}
                         </span>
                       </div>
                       <div className="flex items-center justify-between text-zinc-400">
                         <span>DSP Mastering</span>
                         <span className="text-amber-300 font-mono text-[11px]">
-                          {isLosslessEnabled ? `Active (${activePreset})` : 'Bypass'}
+                          {isEqEnabled ? `Active (${activePreset})` : 'Bypass'}
                         </span>
                       </div>
                       <div className="flex items-center justify-between text-zinc-400">
@@ -2288,25 +2370,25 @@ export default function App() {
                 </div>
               )}
 
-              {/* SUB-TAB 3: STUDIO 24-BIT DAC & 5-BAND PARAMETRIC EQ */}
+              {/* SUB-TAB 3: 5-BAND PARAMETRIC EQ */}
               {rightTab === 'eq' && (
                 <div className="space-y-4">
                   <div className="flex items-center justify-between p-3 rounded-xl bg-amber-500/10 border border-amber-500/25">
                     <div>
-                      <p className="text-xs font-bold text-amber-300">96kHz Lossless DSP</p>
-                      <p className="text-[11px] text-zinc-400">32-bit float audio pipeline</p>
+                      <p className="text-xs font-bold text-amber-300">Equalizer audio</p>
+                      <p className="text-[11px] text-zinc-400">EQ mengubah sinyal yang diputar</p>
                     </div>
                     <button
                       onClick={() => {
-                        const next = !isLosslessEnabled;
-                        setIsLosslessEnabled(next);
-                        dspEngine.setLosslessMode(next);
+                        const next = !isEqEnabled;
+                        setIsEqEnabled(next);
+                        dspEngine.setEqEnabled(currentTrack?.isLocalLossless ? false : next);
                       }}
                       className={`px-3 py-1 rounded-full text-[11px] font-bold ${
-                        isLosslessEnabled ? 'bg-amber-400 text-black' : 'bg-zinc-800 text-zinc-400'
+                        isEqEnabled ? 'bg-amber-400 text-black' : 'bg-zinc-800 text-zinc-400'
                       }`}
                     >
-                      {isLosslessEnabled ? 'ON' : 'OFF'}
+                      {isEqEnabled ? 'ON' : 'OFF'}
                     </button>
                   </div>
 
@@ -2424,9 +2506,11 @@ export default function App() {
                   >
                     {currentTrack.artist}
                   </button>
-                  <span className="hidden sm:inline text-[9px] font-mono px-1 rounded bg-amber-400/15 text-amber-300 font-bold shrink-0">
-                    24-BIT
-                  </span>
+                  {currentTrack.isLocalLossless && (
+                    <span className="hidden sm:inline text-[9px] font-mono px-1 rounded bg-amber-400/15 text-amber-300 font-bold shrink-0">
+                      {currentTrack.localFormat}
+                    </span>
+                  )}
                 </div>
               </div>
               <button
@@ -2537,7 +2621,7 @@ export default function App() {
               setShowRightPanel(true);
               setRightTab('eq');
             }}
-            title="24-Bit Lossless DAC & Equalizer"
+            title="Equalizer audio"
             className={`p-1.5 rounded-lg transition-colors ${
               showRightPanel && rightTab === 'eq' ? 'text-amber-400' : 'text-zinc-400 hover:text-white'
             }`}
@@ -2548,7 +2632,7 @@ export default function App() {
           {currentTrack && (
             <button
               onClick={() => handleDownloadOffline(currentTrack, true)}
-              title="Download 24-Bit FLAC ke Perangkat"
+              title="Simpan audio untuk offline"
               className="p-1.5 rounded-lg text-zinc-400 hover:text-amber-300 transition-colors"
             >
               {downloadingIds[currentTrack.id] !== undefined ? (
@@ -2602,7 +2686,7 @@ export default function App() {
         {[
           { id: 'discover', label: 'Beranda', icon: Disc3, action: () => setActiveView('discover') },
           { id: 'liked', label: 'Disukai', icon: Heart, action: () => setActiveView('liked') },
-          { id: 'offline', label: 'Offline FLAC', icon: Download, action: () => setActiveView('offline') },
+          { id: 'offline', label: 'Offline', icon: Download, action: () => setActiveView('offline') },
           { id: 'wrapped', label: 'Wrapped', icon: Activity, action: () => setActiveView('wrapped') },
           { id: 'player', label: 'Lirik & EQ', icon: Sliders, action: () => setIsFullscreenPlayer(true) }
         ].map((item) => {
@@ -2645,7 +2729,7 @@ export default function App() {
             </button>
             <div className="flex items-center gap-2">
               <span className="px-2.5 py-1 rounded-full bg-amber-400/15 border border-amber-400/30 text-amber-300 text-[11px] font-mono font-bold">
-                24-BIT / 96KHZ LOSSLESS
+                {currentTrack.isLocalLossless ? `${currentTrack.localFormat} LOSSLESS SOURCE` : 'SOURCE QUALITY UNVERIFIED'}
               </span>
               <span className="px-2.5 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-[11px] font-semibold">
                 ✓ Wrapped Synced
@@ -2691,7 +2775,7 @@ export default function App() {
                   <button
                     onClick={() => handleDownloadOffline(currentTrack, true)}
                     className="p-2.5 rounded-full bg-white/10 text-amber-300"
-                    title="Download 24-Bit FLAC"
+                    title="Simpan audio untuk offline"
                   >
                     <Download className="w-5 h-5" />
                   </button>
@@ -2768,7 +2852,7 @@ export default function App() {
               ) : (
                 <div className="h-full flex flex-col items-center justify-center text-white/40 space-y-2">
                   <LosslessIcon className="w-10 h-10 text-amber-300/70" />
-                  <p className="text-sm font-semibold">24-Bit / 96kHz Hi-Res Audio Stream</p>
+              <p className="text-sm font-semibold">Kualitas audio mengikuti file atau penyedia sumber</p>
                 </div>
               )}
             </div>
@@ -2823,9 +2907,9 @@ export default function App() {
               )}
 
               <div className="p-3.5 rounded-2xl bg-black/50 border border-white/[0.06] space-y-2">
-                <p className="font-bold text-amber-300">Koneksi Hi-Res Studio Server (Full-Track & FFmpeg FLAC)</p>
+                <p className="font-bold text-amber-300">Koneksi Studio Server (Full-Track & konversi audio)</p>
                 <p className="text-zinc-400 leading-relaxed">
-                  Saat satu Wi-Fi/Hotspot dengan laptop, masukkan IP Server untuk konversi 24-Bit FLAC penuh. Saat di luar rumah (4G/5G), APK otomatis beralih ke Standalone Cloud & Offline FLAC!
+                  Konversi ke FLAC tidak menambah detail yang tidak ada pada sumber audio. Kualitas stream online mengikuti penyedianya.
                 </p>
                 <div className="flex gap-2">
                   <input

@@ -279,7 +279,7 @@ app.get('/api/spotify/playlists', async (req, res) => {
 
 /**
  * Fetch All Tracks inside a User's Real Spotify Playlist or Spotify Liked Songs
- * Plays in 24-Bit Lossless Full-Track via lazy ytsearch1 resolver!
+ * Resolves playable audio from YouTube; source quality is not guaranteed lossless.
  */
 app.get('/api/spotify/playlist/:playlistId', async (req, res) => {
   try {
@@ -315,14 +315,7 @@ app.get('/api/spotify/playlist/:playlistId', async (req, res) => {
           cover: t.album?.images?.[0]?.url || '',
           audioUrl: `/api/stream?q=${encodeURIComponent(q)}&fallback=${encodeURIComponent(t.preview_url || '')}`,
           previewUrl: t.preview_url || '',
-          losslessInfo: {
-            available: true,
-            format: 'FLAC',
-            bitDepth: 24,
-            sampleRate: '96.0 kHz',
-            bitrate: '1411 kbps',
-            source: 'Real Spotify Library + 24-Bit Lossless Bridge'
-          },
+          losslessInfo: { available: false, format: 'Unverified source quality' },
           sourceMode: 'spotify'
         };
       });
@@ -417,9 +410,9 @@ async function resolveFullStreamUrl(videoId = '', fallbackUrl = '', searchQuery 
         YT_DLP_PATH,
         [
           '--js-runtimes',
-          'node',
+          `node:${process.execPath}`,
           '-f',
-          'bestaudio[ext=m4a]/bestaudio',
+          'ba[protocol=https]/ba/bestaudio',
           '--no-playlist',
           '--no-warnings',
           '-g',
@@ -427,7 +420,10 @@ async function resolveFullStreamUrl(videoId = '', fallbackUrl = '', searchQuery 
         ],
         { timeout: 18000 }
       );
-      const directUrl = stdout.trim().split(/\r?\n/)[0];
+      const lines = stdout.trim().split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+      const directUrl =
+        lines.find((l) => l.startsWith('http') && !l.includes('.m3u8')) ||
+        lines.find((l) => l.startsWith('http'));
       if (directUrl && directUrl.startsWith('http')) {
         streamCache.set(cacheKey, {
           url: directUrl,
@@ -575,14 +571,7 @@ app.get('/api/search', async (req, res) => {
         lyricMatch: extra.lyricMatch || null,
         discoveredViaLyricIndex: Boolean(extra.discoveredViaLyricIndex),
         lyricConsensusCount: extra.lyricConsensusCount || 0,
-        losslessInfo: {
-          available: true,
-          format: 'FLAC',
-          bitDepth: 24,
-          sampleRate: '96.0 kHz',
-          bitrate: '1411 kbps',
-          source: 'Spotify Official Catalog + 24-Bit Lossless'
-        },
+        losslessInfo: { available: false, format: 'Unverified source quality' },
         popularity: t.popularity || 65,
         numericViews: (t.popularity || 65) * 1200000,
         views: `${((t.popularity || 65) * 1.2).toFixed(0)}M streams`,
@@ -633,14 +622,7 @@ app.get('/api/search', async (req, res) => {
         lyricMatch: extra.lyricMatch || null,
         discoveredViaLyricIndex: Boolean(extra.discoveredViaLyricIndex),
         lyricConsensusCount: extra.lyricConsensusCount || 0,
-        losslessInfo: {
-          available: true,
-          format: 'FLAC',
-          bitDepth: 24,
-          sampleRate: '96.0 kHz',
-          bitrate: '1411 kbps',
-          source: 'Spotify ISRC + Full-Length Hi-Res Master'
-        },
+        losslessInfo: { available: false, format: 'Unverified source quality' },
         popularity: 75,
         numericViews: 25000000,
         views: '25M streams',
@@ -713,14 +695,7 @@ app.get('/api/search', async (req, res) => {
           lyricMatch: matchingEnrichment?.lyricMatch || null,
           discoveredViaLyricIndex: Boolean(matchingEnrichment),
           lyricConsensusCount: matchingEnrichment?.cand?.count || 0,
-          losslessInfo: {
-            available: true,
-            format: 'FLAC',
-            bitDepth: 24,
-            sampleRate: '48.0 kHz',
-            bitrate: '1152 kbps',
-            source: 'YT Music Full Stream -> 24-Bit FLAC DSP'
-          },
+          losslessInfo: { available: false, format: 'YouTube source; lossless not verified' },
           sourceMode: 'ytmusic',
           views: video.views || '',
           numericViews: video.numericViews || parseViewCount(video.views || '')
@@ -960,8 +935,11 @@ app.get('/api/download-audio', async (req, res) => {
       : url;
 
     if (!sourceUrl) return res.status(400).send('Missing audio stream');
+    if (format === 'FLAC' && !FFMPEG_PATH) {
+      return res.status(503).send('FLAC conversion unavailable; refusing to label the source stream as FLAC');
+    }
 
-    const safeName = `${artist} - ${title} [24bit Hi-Res].${format === 'FLAC' ? 'flac' : 'm4a'}`.replace(
+    const safeName = `${artist} - ${title} [FLAC conversion; source quality unverified].${format === 'FLAC' ? 'flac' : 'm4a'}`.replace(
       /[^a-zA-Z0-9 \-\.\[\]\(\)]/g,
       ''
     );
@@ -1057,7 +1035,7 @@ app.post('/api/spotify/wrapped-sync', async (req, res) => {
         });
 
         if (spPlay.status === 204 || spPlay.status === 200) {
-          // Mute Spotify Connect device volume so user hears AURA's 24-Bit Lossless stream without double audio!
+          // Mute Spotify Connect device volume to avoid hearing both playback sources.
           await fetch('https://api.spotify.com/v1/me/player/volume?volume_percent=0', {
             method: 'PUT',
             headers: { Authorization: `Bearer ${activeToken}` }
@@ -1084,7 +1062,7 @@ app.post('/api/spotify/wrapped-sync', async (req, res) => {
     artist: track?.artist || 'Unknown Artist',
     cover: track?.cover || '',
     spotifyUri: resolvedUri || 'spotify:track:matched',
-    playedVia: activeMode === 'ytmusic' ? 'YouTube Music • Hi-Res' : 'Spotify • Hi-Res',
+    playedVia: activeMode === 'ytmusic' ? 'YouTube Music • source quality unverified' : 'Spotify catalog • source quality unverified',
     listenedSeconds: listenedSeconds || 215,
     wrappedCounted: true,
     syncStatus

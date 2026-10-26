@@ -17,7 +17,7 @@ class AuraMusicApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'AURA Music Lossless',
+      title: 'AURA Music',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark(useMaterial3: true).copyWith(
         scaffoldBackgroundColor: const Color(0xFF09090B),
@@ -53,7 +53,7 @@ class TrackItem {
     required this.album,
     required this.coverUrl,
     required this.audioUrl,
-    this.losslessSpec = 'FLAC 24-Bit / 96kHz (1411 kbps)',
+    this.losslessSpec = 'Online preview • source quality unverified',
   });
 }
 
@@ -70,7 +70,6 @@ class _AuraHomeScreenState extends State<AuraHomeScreen> {
   final TextEditingController _searchCtrl = TextEditingController(text: 'Tulus');
 
   MusicSourceMode _mode = MusicSourceMode.spotify;
-  bool _isLosslessMaster = true;
   bool _wrappedSyncEnabled = true;
   bool _isLoading = false;
 
@@ -113,9 +112,7 @@ class _AuraHomeScreenState extends State<AuraHomeScreen> {
           album: item['collectionName'] ?? 'Single',
           coverUrl: art,
           audioUrl: item['previewUrl'] ?? '',
-          losslessSpec: _mode == MusicSourceMode.spotify
-              ? 'Spotify HiFi Bridge • 24-Bit/96kHz FLAC'
-              : 'YT Music Opus 251 -> 24-Bit FLAC Remaster',
+          losslessSpec: 'Online preview • source quality unverified',
         );
       }).toList();
 
@@ -132,7 +129,7 @@ class _AuraHomeScreenState extends State<AuraHomeScreen> {
     }
   }
 
-  /// Plays track (supports YT Music direct stream extraction or Lossless Bridge)
+  /// Plays the available online preview or YouTube audio stream.
   /// and automatically triggers Spotify Wrapped Sync!
   Future<void> _playTrack(TrackItem track) async {
     setState(() => _currentTrack = track);
@@ -163,7 +160,7 @@ class _AuraHomeScreenState extends State<AuraHomeScreen> {
   }
 
   /// Sends playback telemetry to Spotify Web API (/v1/me/player) & Scrobbler
-  /// so every YT Music or Offline FLAC play counts toward Spotify Wrapped
+  /// so supported online playback can be logged to the Spotify Wrapped bridge
   Future<void> _syncToSpotifyWrapped(TrackItem track) async {
     final logMsg =
         '[${DateTime.now().toLocal().toString().substring(11, 19)}] "${track.title}" - ${track.artist} '
@@ -173,12 +170,12 @@ class _AuraHomeScreenState extends State<AuraHomeScreen> {
     });
   }
 
-  /// Offline Download to Phone Storage (.flac container)
+  /// Saves the available audio stream to phone storage without claiming a lossless conversion.
   Future<void> _downloadOfflineToPhone(TrackItem track) async {
     try {
       final dir = await getApplicationDocumentsDirectory();
       final safeName = '${track.artist}_${track.title}'.replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '_');
-      final file = File('${dir.path}/$safeName.flac');
+      final file = File('${dir.path}/$safeName.m4a');
 
       final res = await http.get(Uri.parse(track.audioUrl));
       await file.writeAsBytes(res.bodyBytes);
@@ -194,7 +191,7 @@ class _AuraHomeScreenState extends State<AuraHomeScreen> {
           SnackBar(
             backgroundColor: const Color(0xFF1DB954),
             content: Text(
-              'Berhasil download Offline 24-Bit FLAC: ${track.title} (${file.path})',
+              'Audio tersimpan offline (kualitas sumber tidak berubah): ${track.title} (${file.path})',
               style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
             ),
           ),
@@ -235,7 +232,7 @@ class _AuraHomeScreenState extends State<AuraHomeScreen> {
                 borderRadius: BorderRadius.circular(6),
               ),
               child: const Text(
-                '24-BIT FLAC',
+                'SOURCE UNVERIFIED',
                 style: TextStyle(fontSize: 10, color: Colors.amber, fontWeight: FontWeight.bold),
               ),
             ),
@@ -293,8 +290,8 @@ class _AuraHomeScreenState extends State<AuraHomeScreen> {
               onSubmitted: _searchTracks,
               decoration: InputDecoration(
                 hintText: isSpotify
-                    ? 'Cari lagu di Spotify (Lossless 24-bit)...'
-                    : 'Cari lagu/remix di YouTube Music (Lossless + Wrapped Sync)...',
+                    ? 'Cari lagu di Spotify...'
+                    : 'Cari lagu/remix di YouTube Music...',
                 prefixIcon: const Icon(Icons.search),
                 filled: true,
                 fillColor: const Color(0xFF18181B),
@@ -327,7 +324,7 @@ class _AuraHomeScreenState extends State<AuraHomeScreen> {
                         ),
                         trailing: IconButton(
                           icon: const Icon(Icons.download_for_offline, color: Colors.amber),
-                          tooltip: 'Download Lossless FLAC ke HP',
+                          tooltip: 'Simpan audio untuk offline',
                           onPressed: () => _downloadOfflineToPhone(t),
                         ),
                       );

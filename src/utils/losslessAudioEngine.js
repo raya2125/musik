@@ -1,7 +1,7 @@
-// 24-Bit / 96kHz Lossless Audio DSP Engine using Web Audio API
+// Audio processing and EQ engine using Web Audio API.
 // Provides 5-Band Parametric EQ, Dynamic Range Expander, and Real-Time Spectrum Analyzer
 
-export class LosslessAudioEngine {
+export class AudioProcessingEngine {
   constructor() {
     this.ctx = null;
     this.source = null;
@@ -9,20 +9,22 @@ export class LosslessAudioEngine {
     this.bands = [];
     this.preamp = null;
     this.isInitialized = false;
-    this.losslessActive = true;
+    this.eqEnabled = true;
   }
 
   init(audioElement) {
     if (this.isInitialized || !audioElement) return;
     const AudioContext = window.AudioContext || window.webkitAudioContext;
-    this.ctx = new AudioContext({ sampleRate: 96000 }); // Request 96kHz Hi-Res output where hardware supports
+    // Keep the device/browser's preferred rate. Requesting 96 kHz does not make
+    // a lossy source lossless, and browser audio processing is not bit-perfect.
+    this.ctx = new AudioContext();
 
     this.source = this.ctx.createMediaElementSource(audioElement);
     this.preamp = this.ctx.createGain();
     this.analyser = this.ctx.createAnalyser();
     this.analyser.fftSize = 128;
 
-    // 5-band Hi-Res Mastering Equalizer: 60Hz (Sub), 230Hz (Warmth), 910Hz (Vocal), 3.6kHz (Presence), 14kHz (Air/Hi-Res)
+    // Five-band equalizer.
     const freqs = [
       { freq: 60, type: 'lowshelf', gain: 2.5, label: '60Hz Sub' },
       { freq: 230, type: 'peaking', gain: 1.2, label: '230Hz Bass' },
@@ -60,10 +62,10 @@ export class LosslessAudioEngine {
     }
   }
 
-  setLosslessMode(enabled) {
-    this.losslessActive = enabled;
+  setEqEnabled(enabled) {
+    this.eqEnabled = enabled;
     if (!this.isInitialized) return;
-    // Apply Hi-Res Acoustic Mastering curve when Lossless 24-bit mode is active
+    // Apply the selected EQ curve when enabled.
     const defaultGains = [2.5, 1.2, 0.0, 1.8, 3.2];
     this.bands.forEach((b, idx) => {
       b.filter.gain.setTargetAtTime(enabled ? defaultGains[idx] : 0, this.ctx.currentTime, 0.1);
@@ -87,4 +89,4 @@ export class LosslessAudioEngine {
   }
 }
 
-export const dspEngine = new LosslessAudioEngine();
+export const dspEngine = new AudioProcessingEngine();

@@ -24,33 +24,38 @@ export async function saveTrackOffline(track, onProgress) {
   let audioBlob = null;
 
   try {
-    if (onProgress) onProgress(15);
-    const params = new URLSearchParams({
-      videoId: track.ytVideoId || '',
-      url: track.audioUrl || '',
-      title: track.title || 'Track',
-      artist: track.artist || 'Artist',
-      album: track.album || 'Single',
-      format: 'FLAC'
-    });
-    if (onProgress) onProgress(40);
-    const base = getStudioServerUrl();
-    const res = await fetch(`${base}/api/download-audio?${params.toString()}`);
-    if (!res.ok) throw new Error('Download failed');
-    if (onProgress) onProgress(75);
-    audioBlob = await res.blob();
-    if (onProgress) onProgress(95);
+    // Preserve imported lossless files byte-for-byte; do not transcode them.
+    if (track.isLocalLossless && track.audioBlob) {
+      audioBlob = track.audioBlob;
+    } else {
+      if (onProgress) onProgress(15);
+      const params = new URLSearchParams({
+        videoId: track.ytVideoId || '',
+        url: track.audioUrl || '',
+        title: track.title || 'Track',
+        artist: track.artist || 'Artist',
+        album: track.album || 'Single',
+        format: 'FLAC'
+      });
+      if (onProgress) onProgress(40);
+      const base = getStudioServerUrl();
+      const res = await fetch(`${base}/api/download-audio?${params.toString()}`);
+      if (!res.ok) throw new Error('Download failed');
+      if (onProgress) onProgress(75);
+      audioBlob = await res.blob();
+      if (onProgress) onProgress(95);
+    }
   } catch (e) {
     const res = await fetch(track.previewUrl || track.audioUrl);
     audioBlob = await res.blob();
   }
 
-  const realSizeMB = audioBlob?.size ? (audioBlob.size / (1024 * 1024)).toFixed(1) : '26.4';
+  const realSizeMB = audioBlob?.size ? (audioBlob.size / (1024 * 1024)).toFixed(1) : '0.0';
 
   const record = {
     ...track,
     downloadedAt: new Date().toISOString(),
-    fileSizeMB: parseFloat(realSizeMB) < 1 ? '24.8' : realSizeMB,
+    fileSizeMB: realSizeMB,
     audioBlob,
     isOffline: true
   };

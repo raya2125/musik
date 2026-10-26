@@ -1,5 +1,5 @@
 name: aura_music_lossless
-description: Dual-Mode Spotify & YouTube Music Player with 24-Bit Lossless FLAC & Spotify Wrapped Sync Bridge.
+description: Dual-Mode Spotify & YouTube Music Player with local audio playback and Spotify Wrapped Sync Bridge.
 publish_to: 'none'
 version: 1.0.0+1
 

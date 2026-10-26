@@ -1,22 +1,22 @@
-# AURA Music Studio 🎵 (Lossless Hi-Res & Dual Engine)
+# AURA Music Studio 🎵 (Dual Engine & Local Lossless Playback)
 
-Aplikasi pemutar musik studio modern yang menggabungkan katalog **Spotify** dan **YouTube Music** dengan pemrosesan audio **24-Bit / 96kHz Lossless FLAC**, **Spotify Wrapped Sync Bridge**, serta **Pencarian Pintar berbasis Lirik**.
+Aplikasi pemutar musik yang menggabungkan pencarian katalog **Spotify** dan **YouTube Music**, pemutaran file lokal **FLAC/WAV PCM**, **Spotify Wrapped Sync Bridge**, serta **Pencarian berbasis Lirik**. Kualitas stream dari katalog online tidak diverifikasi sebagai lossless.
 
 ---
 
 ## ✨ Fitur Unggulan
 
 1. **Dual-Mode Engine (`Spotify Mode` ⇄ `YT Music Mode`)**
-   - **Spotify Mode:** Akses katalog lagu Spotify dengan kualitas audio Lossless Hi-Res.
+   - **Spotify Mode:** Cari lagu dari katalog Spotify; audio online berasal dari stream pihak ketiga dan kualitasnya tidak dijamin lossless.
    - **YT Music Mode:** Akses lagu resmi, versi remix, akustik, dan *live sessions* dari YouTube Music tanpa batas.
 2. **Spotify Wrapped Sync Bridge (Anti-Ketinggalan Wrapped)**
    - Setiap kali memutar lagu di mode apa pun (bahkan YT Music atau Offline), pemutaran tetap dicocokkan ke Spotify Web API & Scrobbler sehingga menit dengar & artis favoritmu **tetap terhitung 100% di Spotify Wrapped**.
-3. **24-Bit / 96kHz Lossless Audio DSP & 5-Band Parametric EQ**
-   - Pemrosesan sinyal audio 32-bit float dengan equalizer parametrik 5-band (*60Hz Sub-Bass, 230Hz Warmth, 910Hz Vocal, 3.6kHz Presence, 14kHz Air*) serta *Real-Time Spectrum Visualizer*.
+3. **Pemutaran File Lossless Lokal & 5-Band Parametric EQ**
+   - Putar file FLAC valid atau WAV PCM. File yang diimpor dipertahankan tanpa transcode; file stream online tidak diberi klaim lossless. EQ dapat mengubah sinyal audio.
 4. **Pencarian Cerdas Berbasis Lirik (Neural Lyric Search)**
    - Cukup ketik potongan lirik yang kamu ingat (misal: *"ku kira kita akan bersama"* atau *"sial sialnya ku bertemu"*), sistem otomatis menemukan judul lagunya secara tepat dan menampilkan tombol **`▶ Putar di mm:ss`** langsung ke detik lirik tersebut dinyanyikan.
-5. **Download Offline 24-Bit FLAC di HP & Desktop**
-   - Simpan lagu ke penyimpanan lokal HP (IndexedDB) untuk diputar tanpa kuota, atau ekspor langsung sebagai file `.flac` 24-bit murni menggunakan konverter FFmpeg.
+5. **Simpan Audio Offline**
+   - Simpan audio untuk pemutaran offline. Mengubah stream online menjadi wadah FLAC tidak menambah detail yang hilang dari sumber.
 6. **Lirik Karaoke Real-Time (Live Synced Lyrics)**
    - Lirik lagu sinkron otomatis baris demi baris mengikuti detik nyanyian penyanyi ala Apple Music / Spotify.
 7. **Multi-Platform Support**
@@ -51,5 +51,5 @@ File APK rilis sudah siap di-install langsung:
 
 ## 🛠️ Tech Stack
 - **Frontend:** React 18, Tailwind CSS, Vite, Lucide Icons, Web Audio API DSP
-- **Backend:** Node.js, Express, `yt-dlp`, FFmpeg 24-Bit Audio Transcoder, LRCLIB API
+- **Backend:** Node.js, Express, `yt-dlp`, FFmpeg audio conversion, LRCLIB API
 - **Mobile:** Capacitor 6, Android SDK (API 34), Gradle 8.0, OpenJDK 17

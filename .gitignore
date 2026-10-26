@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Production builds
+dist/
+build/
+
+# Android build & caches
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+android/capacitor-cordova-android-plugins/build/
+
+# Flutter build & dependencies
+flutter-mobile/.dart_tool/
+flutter-mobile/.flutter-plugins
+flutter-mobile/.flutter-plugins-dependencies
+flutter-mobile/build/
+
+# Sessions & sensitive configs
+server/spotify-session.json
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS Files
+.DS_Store
+Thumbs.db

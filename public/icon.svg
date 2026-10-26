@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="auraGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1DB954" />
+      <stop offset="55%" stop-color="#10b981" />
+      <stop offset="100%" stop-color="#f59e0b" />
+    </linearGradient>
+    <linearGradient id="surface" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#18181b" />
+      <stop offset="100%" stop-color="#09090b" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="118" fill="url(#surface)" />
+  <rect x="14" y="14" width="484" height="484" rx="106" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="4" />
+  <!-- Minimalist Audio Waveform / Aura Rings -->
+  <rect x="128" y="206" width="34" height="100" rx="17" fill="url(#auraGrad)" />
+  <rect x="184" y="152" width="34" height="208" rx="17" fill="url(#auraGrad)" />
+  <rect x="240" y="112" width="34" height="288" rx="17" fill="#ffffff" />
+  <rect x="296" y="164" width="34" height="184" rx="17" fill="url(#auraGrad)" />
+  <rect x="352" y="214" width="34" height="84" rx="17" fill="url(#auraGrad)" />
+</svg>

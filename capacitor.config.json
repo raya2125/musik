@@ -1,0 +1,15 @@
+{
+  "appId": "com.aurastudio.music",
+  "appName": "AURA Music",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true,
+    "allowNavigation": ["*"]
+  },
+  "android": {
+    "backgroundColor": "#000000",
+    "allowMixedContent": true
+  }
+}

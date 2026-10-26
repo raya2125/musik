@@ -1,0 +1,2167 @@
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import {
+  Play, Pause, SkipForward, SkipBack, Search, Download, Check,
+  Sliders, Smartphone, Activity, Volume2, VolumeX, Trash2,
+  Heart, Shuffle, Repeat, Mic2, ListMusic, Maximize2, Minimize2,
+  ChevronLeft, Library, Sparkles, WifiOff, Disc3, Loader2, X,
+  CheckCircle2, Radio, ShieldCheck, ArrowDownToLine, Info
+} from 'lucide-react';
+import { dspEngine } from './utils/losslessAudioEngine';
+import { saveTrackOffline, getAllOfflineTracks, deleteOfflineTrack } from './utils/offlineStorage';
+import {
+  apiSearchTracks,
+  apiFetchLyrics,
+  apiWrappedSync,
+  apiGetWrappedLogs,
+  getStudioServerUrl,
+  setStudioServerUrl,
+  isNativeApk,
+  apiGetSpotifyStatus,
+  apiLogoutSpotify,
+  apiGetSpotifyPlaylists,
+  apiGetSpotifyPlaylistTracks,
+  getSpotifyLoginUrl
+} from './utils/apiBridge';
+
+/* --- Authentic Minimalist Brand & Audio Vector Icons --- */
+const SpotifyIcon = ({ className = 'w-4 h-4' }) => (
+  <svg viewBox="0 0 24 24" fill="currentColor" className={className}>
+    <path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2zm4.586 14.424c-.18.295-.563.387-.857.207-2.35-1.434-5.305-1.76-8.786-.963-.335.077-.67-.133-.746-.469-.077-.336.132-.67.469-.746 3.809-.87 7.076-.496 9.713 1.115.293.18.386.563.207.856zm1.224-2.723c-.226.367-.706.482-1.072.257-2.687-1.652-6.785-2.131-9.965-1.166-.413.127-.848-.106-.973-.517-.125-.413.108-.848.52-.973 3.632-1.102 8.147-.568 11.234 1.328.366.226.48.707.256 1.071zm.105-2.835C14.692 8.95 9.375 8.775 6.297 9.71c-.493.15-1.016-.128-1.166-.62-.149-.493.129-1.016.621-1.166 3.532-1.073 9.404-.865 13.115 1.338.445.264.59.837.327 1.282-.264.444-.838.59-1.279.322z" />
+  </svg>
+);
+
+const YTMusicIcon = ({ className = 'w-4 h-4' }) => (
+  <svg viewBox="0 0 24 24" fill="currentColor" className={className}>
+    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 14.5c-2.49 0-4.5-2.01-4.5-4.5S9.51 7.5 12 7.5s4.5 2.01 4.5 4.5-2.01 4.5-4.5 4.5zm0-7.5c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3zm-1 1.5l2.5 1.5-2.5 1.5v-3z" />
+  </svg>
+);
+
+const LosslessIcon = ({ className = 'w-4 h-4' }) => (
+  <svg viewBox="0 0 24 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" className={className}>
+    <path d="M2 8c2-5 4-5 6 0s4 5 6 0 4-5 6 0" />
+    <path d="M2 8c2 5 4 5 6 0s4-5 6 0 4 5 6 0" strokeOpacity="0.45" />
+  </svg>
+);
+
+const PlayingBars = ({ colorClass = 'bg-emerald-400' }) => (
+  <div className="flex items-end gap-[2px] h-3.5 w-3.5 justify-center">
+    <span className={`w-[3px] rounded-full animate-eq-1 ${colorClass}`} />
+    <span className={`w-[3px] rounded-full animate-eq-2 ${colorClass}`} />
+    <span className={`w-[3px] rounded-full animate-eq-3 ${colorClass}`} />
+  </div>
+);
+
+const CURATED_MIXES = [
+  {
+    id: 'mix_indo',
+    title: 'Nusantara Hi-Res',
+    subtitle: 'Tulus, Mahalini, Bernadya, Hindia',
+    query: 'Mahalini Tulus Bernadya',
+    mode: 'spotify',
+    gradient: 'from-emerald-600 to-teal-900',
+    cover: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=300&q=80'
+  },
+  {
+    id: 'mix_midnight',
+    title: 'Midnight Studio R&B',
+    subtitle: 'The Weeknd, Joji, SZA, Daniel Caesar',
+    query: 'The Weeknd Joji',
+    mode: 'spotify',
+    gradient: 'from-indigo-600 to-slate-900',
+    cover: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?auto=format&fit=crop&w=300&q=80'
+  },
+  {
+    id: 'mix_yt_live',
+    title: 'YT Music Live & Acoustic',
+    subtitle: 'Unplugged, Live Sessions & Exclusive Covers',
+    query: 'Tulus Hindia live acoustic session',
+    mode: 'ytmusic',
+    gradient: 'from-rose-600 to-red-950',
+    cover: 'https://images.unsplash.com/photo-1501386761578-eac5c94b800a?auto=format&fit=crop&w=300&q=80'
+  },
+  {
+    id: 'mix_classics',
+    title: 'Timeless Remastered',
+    subtitle: 'Coldplay, Sheila On 7, Dewa 19, Oasis',
+    query: 'Sheila On 7 Coldplay',
+    mode: 'spotify',
+    gradient: 'from-amber-600 to-stone-900',
+    cover: 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?auto=format&fit=crop&w=300&q=80'
+  }
+];
+
+const EQ_PRESETS = {
+  'Hi-Res Reference': [2.5, 1.2, 0.0, 1.8, 3.2],
+  'Harman Target': [3.5, 1.5, -0.5, 2.0, 2.5],
+  'Deep Sub Bass': [5.0, 3.0, 0.0, 1.0, 1.5],
+  'Vocal Crystal': [-0.5, 0.5, 2.5, 3.5, 2.0],
+  'Flat Studio': [0.0, 0.0, 0.0, 0.0, 0.0]
+};
+
+function formatTime(secs) {
+  if (!secs || isNaN(secs) || !isFinite(secs)) return '0:00';
+  const m = Math.floor(secs / 60);
+  const s = Math.floor(secs % 60);
+  return `${m}:${s < 10 ? '0' : ''}${s}`;
+}
+
+export default function App() {
+  // Core Engine State
+  const [sourceMode, setSourceMode] = useState('spotify'); // 'spotify' | 'ytmusic'
+  const [activeView, setActiveView] = useState('discover'); // 'discover' | 'liked' | 'offline' | 'wrapped'
+  const [rightTab, setRightTab] = useState('playing'); // 'playing' | 'lyrics' | 'eq'
+  const [showRightPanel, setShowRightPanel] = useState(true);
+  const [isFullscreenPlayer, setIsFullscreenPlayer] = useState(false);
+  const [showInstallModal, setShowInstallModal] = useState(false);
+  const [libraryFilter, setLibraryFilter] = useState('all');
+
+  // Catalog & Search
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeFeedTitle, setActiveFeedTitle] = useState('Rekomendasi Utama');
+  const [tracks, setTracks] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // Playback State
+  const [currentTrack, setCurrentTrack] = useState(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isBuffering, setIsBuffering] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [duration, setDuration] = useState(215);
+  const [volume, setVolume] = useState(0.9);
+  const [isMuted, setIsMuted] = useState(false);
+  const [isShuffle, setIsShuffle] = useState(false);
+  const [isRepeat, setIsRepeat] = useState(false);
+
+  // Lossless & EQ State
+  const [isLosslessEnabled, setIsLosslessEnabled] = useState(true);
+  const [activePreset, setActivePreset] = useState('Hi-Res Reference');
+  const [eqGains, setEqGains] = useState(EQ_PRESETS['Hi-Res Reference']);
+  const [spectrumBars, setSpectrumBars] = useState(new Array(28).fill(10));
+
+  // Live Lyrics State
+  const [lyricsData, setLyricsData] = useState({ loading: false, found: false, synced: false, lines: [] });
+  const activeLyricRef = useRef(null);
+
+  // Liked Songs & Offline Storage
+  const [likedTracks, setLikedTracks] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('aura_liked_tracks') || '[]');
+    } catch {
+      return [];
+    }
+  });
+  const [offlineTracks, setOfflineTracks] = useState([]);
+  const [downloadingIds, setDownloadingIds] = useState({});
+
+  // Spotify Wrapped Sync Bridge & Official OAuth Account State
+  const [wrappedSyncEnabled, setWrappedSyncEnabled] = useState(true);
+  const [spotifyAccount, setSpotifyAccount] = useState({
+    connected: false,
+    user: null,
+    redirectUri: 'http://127.0.0.1:3001/api/spotify/callback'
+  });
+  const [spotifyClientId, setSpotifyClientId] = useState(
+    localStorage.getItem('aura_spotify_client_id') || ''
+  );
+  const [userSpotifyPlaylists, setUserSpotifyPlaylists] = useState([]);
+  const [copiedRedirect, setCopiedRedirect] = useState(false);
+  const [spotifyUsername, setSpotifyUsername] = useState(
+    localStorage.getItem('aura_spotify_user') || 'Spotify Listener'
+  );
+  const [spotifyToken, setSpotifyToken] = useState(localStorage.getItem('aura_spotify_token') || '');
+  const [wrappedLogs, setWrappedLogs] = useState([]);
+  const [totalWrappedMinutes, setTotalWrappedMinutes] = useState(248);
+  const [syncToast, setSyncToast] = useState(null);
+
+  // PWA Install Prompt & Server URL Config
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [serverUrlInput, setServerUrlInput] = useState(() => getStudioServerUrl());
+
+  const audioRef = useRef(null);
+  const animFrameRef = useRef(null);
+
+  const greeting = useMemo(() => {
+    const h = new Date().getHours();
+    if (h < 11) return 'Selamat Pagi';
+    if (h < 15) return 'Selamat Siang';
+    if (h < 19) return 'Selamat Sore';
+    return 'Selamat Malam';
+  }, []);
+
+  const refreshSpotifyConnection = async () => {
+    const status = await apiGetSpotifyStatus();
+    setSpotifyAccount(status);
+    if (status.clientId && !spotifyClientId) {
+      setSpotifyClientId(status.clientId);
+      localStorage.setItem('aura_spotify_client_id', status.clientId);
+    }
+    if (status.connected) {
+      const pl = await apiGetSpotifyPlaylists();
+      if (pl.playlists) setUserSpotifyPlaylists(pl.playlists);
+    } else {
+      setUserSpotifyPlaylists([]);
+    }
+  };
+
+  const openSpotifyPlaylist = async (pl) => {
+    setIsLoading(true);
+    setSourceMode('spotify');
+    setActiveView('discover');
+    setActiveFeedTitle(pl.name);
+    try {
+      const data = await apiGetSpotifyPlaylistTracks(pl.id);
+      if (data.results?.length) setTracks(data.results);
+    } catch (e) {
+      console.error('Playlist load error:', e);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSpotifyOAuthLogin = () => {
+    if (!spotifyClientId.trim()) {
+      alert('Masukkan Client ID dari Spotify Developer Dashboard terlebih dahulu!');
+      return;
+    }
+    localStorage.setItem('aura_spotify_client_id', spotifyClientId.trim());
+    const loginUrl = getSpotifyLoginUrl(spotifyClientId.trim());
+    window.open(loginUrl, 'SpotifyLoginPopup', 'width=520,height=720');
+  };
+
+  useEffect(() => {
+    fetchTracks('Tulus Mahalini', 'spotify', 'Pilihan Editor Hi-Res');
+    loadOfflineLibrary();
+    fetchWrappedLogs();
+    refreshSpotifyConnection();
+
+    const handler = (e) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+    const msgHandler = (e) => {
+      if (e.data?.type === 'SPOTIFY_AUTH_SUCCESS') {
+        refreshSpotifyConnection();
+        setSyncToast('Akun Spotify resmi berhasil terhubung!');
+        setTimeout(() => setSyncToast(null), 4000);
+      }
+    };
+    window.addEventListener('beforeinstallprompt', handler);
+    window.addEventListener('message', msgHandler);
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handler);
+      window.removeEventListener('message', msgHandler);
+    };
+  }, []);
+
+  // Persist Liked Songs
+  useEffect(() => {
+    localStorage.setItem('aura_liked_tracks', JSON.stringify(likedTracks));
+  }, [likedTracks]);
+
+  // Fetch Lyrics whenever currentTrack changes
+  useEffect(() => {
+    if (!currentTrack) return;
+    let cancelled = false;
+    setLyricsData({ loading: true, found: false, synced: false, lines: [] });
+
+    apiFetchLyrics(currentTrack.title, currentTrack.artist)
+      .then((data) => {
+        if (!cancelled) {
+          setLyricsData({
+            loading: false,
+            found: Boolean(data.found),
+            synced: Boolean(data.synced),
+            lines: data.lines || []
+          });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setLyricsData({ loading: false, found: false, synced: false, lines: [] });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentTrack?.id]);
+
+  // Auto-scroll synced karaoke lyrics
+  const activeLyricIndex = useMemo(() => {
+    if (!lyricsData.lines.length) return -1;
+    let idx = -1;
+    for (let i = 0; i < lyricsData.lines.length; i++) {
+      if (progress >= lyricsData.lines[i].time - 0.3) {
+        idx = i;
+      } else {
+        break;
+      }
+    }
+    return idx;
+  }, [progress, lyricsData.lines]);
+
+  useEffect(() => {
+    if (activeLyricRef.current && (rightTab === 'lyrics' || isFullscreenPlayer)) {
+      activeLyricRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [activeLyricIndex, rightTab, isFullscreenPlayer]);
+
+  // Spectrum Visualizer Loop
+  useEffect(() => {
+    const tick = () => {
+      if (isPlaying && !isBuffering) {
+        const freq = dspEngine.getFrequencyData();
+        const bars = Array.from({ length: 28 }, (_, i) => {
+          const val = freq[i] || 0;
+          return Math.max(8, Math.min(100, (val / 255) * 100));
+        });
+        setSpectrumBars(bars);
+      }
+      animFrameRef.current = requestAnimationFrame(tick);
+    };
+    animFrameRef.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(animFrameRef.current);
+  }, [isPlaying, isBuffering]);
+
+  const fetchTracks = async (query, mode = sourceMode, customHeading = null) => {
+    setIsLoading(true);
+    setActiveView('discover');
+    if (customHeading) setActiveFeedTitle(customHeading);
+    else setActiveFeedTitle(`Hasil untuk "${query}"`);
+
+    try {
+      const data = await apiSearchTracks(query, mode);
+      if (data.results?.length) {
+        setTracks(data.results);
+        if (!currentTrack) {
+          setCurrentTrack(data.results[0]);
+          setDuration(data.results[0].duration || 215);
+        }
+      }
+    } catch (err) {
+      console.error('Search error:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSwitchMode = (newMode) => {
+    if (newMode === sourceMode) return;
+    setSourceMode(newMode);
+    const q = searchQuery.trim() || (newMode === 'ytmusic' ? 'Mahalini Tulus live audio' : 'Tulus Mahalini');
+    fetchTracks(
+      q,
+      newMode,
+      newMode === 'ytmusic' ? 'YouTube Music • Hi-Res Stream' : 'Spotify Catalog • Hi-Res Master'
+    );
+  };
+
+  const loadOfflineLibrary = async () => {
+    try {
+      const saved = await getAllOfflineTracks();
+      setOfflineTracks(saved);
+    } catch {}
+  };
+
+  const fetchWrappedLogs = async () => {
+    try {
+      const data = await apiGetWrappedLogs();
+      if (data.logs) {
+        setWrappedLogs(data.logs);
+        setTotalWrappedMinutes(248 + (data.totalMinutesCounted || 0));
+      }
+    } catch {}
+  };
+
+  const triggerSpotifyWrappedSync = async (track) => {
+    if (!wrappedSyncEnabled || !track) return;
+    try {
+      const data = await apiWrappedSync({
+        track,
+        spotifyAccessToken: spotifyToken || null,
+        activeMode: track.sourceMode || sourceMode,
+        listenedSeconds: track.duration || 215
+      });
+      if (data.success) {
+        setSyncToast(
+          `Synced ke Spotify Wrapped • ${track.title.slice(0, 28)}${track.title.length > 28 ? '…' : ''}`
+        );
+        setTimeout(() => setSyncToast(null), 4000);
+        fetchWrappedLogs();
+      }
+    } catch {}
+  };
+
+  const playTrack = async (track, startAtSeconds = 0) => {
+    if (!track || !audioRef.current) return;
+    setCurrentTrack(track);
+    setIsBuffering(true);
+    setProgress(startAtSeconds || 0);
+    setDuration(track.duration || 215);
+
+    if (startAtSeconds > 0) {
+      setShowRightPanel(true);
+      setRightTab('lyrics');
+    }
+
+    let playSrc = track.audioUrl;
+    if (track.audioBlob) {
+      playSrc = URL.createObjectURL(track.audioBlob);
+    } else {
+      const offlineMatch = offlineTracks.find((t) => t.id === track.id);
+      if (offlineMatch?.audioBlob) {
+        playSrc = URL.createObjectURL(offlineMatch.audioBlob);
+      }
+    }
+
+    audioRef.current.crossOrigin = 'anonymous';
+    audioRef.current.src = playSrc;
+    audioRef.current.volume = isMuted ? 0 : volume;
+
+    try {
+      dspEngine.init(audioRef.current);
+      dspEngine.resume();
+      dspEngine.setLosslessMode(isLosslessEnabled);
+      await audioRef.current.play();
+      if (startAtSeconds > 0 && audioRef.current) {
+        audioRef.current.currentTime = Math.max(0, startAtSeconds - 0.5);
+      }
+      setIsPlaying(true);
+      setIsBuffering(false);
+      triggerSpotifyWrappedSync(track);
+    } catch (err) {
+      // Fallback to preview stream if full stream fails
+      if (track.previewUrl && playSrc !== track.previewUrl) {
+        try {
+          audioRef.current.src = track.previewUrl;
+          await audioRef.current.play();
+          setIsPlaying(true);
+          triggerSpotifyWrappedSync(track);
+        } catch {}
+      }
+      setIsBuffering(false);
+    }
+  };
+
+  const togglePlayPause = async () => {
+    if (!audioRef.current || !currentTrack) return;
+    if (!audioRef.current.src) {
+      await playTrack(currentTrack);
+      return;
+    }
+    dspEngine.init(audioRef.current);
+    dspEngine.resume();
+    if (isPlaying) {
+      audioRef.current.pause();
+      setIsPlaying(false);
+    } else {
+      setIsBuffering(true);
+      try {
+        await audioRef.current.play();
+        setIsPlaying(true);
+      } finally {
+        setIsBuffering(false);
+      }
+    }
+  };
+
+  const playNext = () => {
+    const activeList = activeDisplayedTracks.length ? activeDisplayedTracks : tracks;
+    if (!activeList.length) return;
+    if (isShuffle) {
+      const rand = activeList[Math.floor(Math.random() * activeList.length)];
+      playTrack(rand);
+      return;
+    }
+    const idx = activeList.findIndex((t) => t.id === currentTrack?.id);
+    const nextIdx = idx >= 0 && idx + 1 < activeList.length ? idx + 1 : 0;
+    playTrack(activeList[nextIdx]);
+  };
+
+  const playPrev = () => {
+    if (audioRef.current && audioRef.current.currentTime > 4) {
+      audioRef.current.currentTime = 0;
+      return;
+    }
+    const activeList = activeDisplayedTracks.length ? activeDisplayedTracks : tracks;
+    if (!activeList.length) return;
+    const idx = activeList.findIndex((t) => t.id === currentTrack?.id);
+    const prevIdx = idx > 0 ? idx - 1 : activeList.length - 1;
+    playTrack(activeList[prevIdx]);
+  };
+
+  const toggleLike = (track, e) => {
+    if (e) e.stopPropagation();
+    if (!track) return;
+    setLikedTracks((prev) => {
+      const exists = prev.some((t) => t.id === track.id);
+      if (exists) return prev.filter((t) => t.id !== track.id);
+      return [{ ...track, audioBlob: undefined }, ...prev];
+    });
+  };
+
+  const isLiked = (id) => likedTracks.some((t) => t.id === id);
+  const isOffline = (id) => offlineTracks.some((t) => t.id === id);
+
+  const handleDownloadOffline = async (track, directExportFile = true, e = null) => {
+    if (e) e.stopPropagation();
+    if (!track || downloadingIds[track.id] !== undefined) return;
+
+    setDownloadingIds((prev) => ({ ...prev, [track.id]: 15 }));
+    try {
+      const record = await saveTrackOffline(track, (pct) => {
+        setDownloadingIds((prev) => ({ ...prev, [track.id]: pct }));
+      });
+      await loadOfflineLibrary();
+
+      if (directExportFile && record.audioBlob) {
+        const blobUrl = URL.createObjectURL(record.audioBlob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = `${track.artist} - ${track.title} [24bit Hi-Res].flac`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+      }
+    } catch (err) {
+      console.error('FLAC Download error:', err);
+    } finally {
+      setTimeout(() => {
+        setDownloadingIds((prev) => {
+          const copy = { ...prev };
+          delete copy[track.id];
+          return copy;
+        });
+      }, 500);
+    }
+  };
+
+  const applyPreset = (name) => {
+    const gains = EQ_PRESETS[name];
+    if (!gains) return;
+    setActivePreset(name);
+    setEqGains([...gains]);
+    gains.forEach((g, idx) => dspEngine.setBandGain(idx, g));
+  };
+
+  const handleEqSlider = (idx, val) => {
+    const db = parseFloat(val);
+    const next = [...eqGains];
+    next[idx] = db;
+    setEqGains(next);
+    setActivePreset('Custom');
+    dspEngine.setBandGain(idx, db);
+  };
+
+  const activeDisplayedTracks = useMemo(() => {
+    if (activeView === 'liked') return likedTracks;
+    if (activeView === 'offline') return offlineTracks;
+    return tracks;
+  }, [activeView, likedTracks, offlineTracks, tracks]);
+
+  const accentBg = sourceMode === 'spotify' ? 'bg-[#1DB954] text-black' : 'bg-[#FF0033] text-white';
+  const accentText = sourceMode === 'spotify' ? 'text-[#1DB954]' : 'text-[#FF0033]';
+  const accentBar = sourceMode === 'spotify' ? 'bg-[#1DB954]' : 'bg-[#FF0033]';
+
+  const ambientGradient = useMemo(() => {
+    if (activeView === 'liked') return 'from-indigo-900/55 via-[#121214] to-[#121214]';
+    if (activeView === 'offline') return 'from-amber-900/40 via-[#121214] to-[#121214]';
+    if (activeView === 'wrapped') return 'from-emerald-900/50 via-[#121214] to-[#121214]';
+    return sourceMode === 'spotify'
+      ? 'from-emerald-950/65 via-[#121214] to-[#121214]'
+      : 'from-rose-950/65 via-[#121214] to-[#121214]';
+  }, [activeView, sourceMode]);
+
+  return (
+    <div className="flex flex-col h-screen w-screen bg-black text-zinc-100 select-none overflow-hidden p-0 sm:p-2 sm:gap-2">
+      {/* Core HTML5 Audio Element */}
+      <audio
+        ref={audioRef}
+        onWaiting={() => setIsBuffering(true)}
+        onPlaying={() => {
+          setIsBuffering(false);
+          setIsPlaying(true);
+        }}
+        onTimeUpdate={() => {
+          if (audioRef.current) {
+            setProgress(audioRef.current.currentTime);
+            if (audioRef.current.duration && isFinite(audioRef.current.duration)) {
+              setDuration(audioRef.current.duration);
+            }
+          }
+        }}
+        onEnded={() => {
+          if (isRepeat && audioRef.current) {
+            audioRef.current.currentTime = 0;
+            audioRef.current.play();
+          } else {
+            playNext();
+          }
+        }}
+      />
+
+      {/* Subtle Floating Toast for Spotify Wrapped Scrobble */}
+      {syncToast && (
+        <div className="fixed top-16 right-6 z-50 flex items-center gap-2 px-3.5 py-2 rounded-full bg-zinc-900/95 border border-emerald-500/30 shadow-2xl backdrop-blur-xl text-xs text-emerald-300 animate-fade-in">
+          <SpotifyIcon className="w-3.5 h-3.5 text-[#1DB954]" />
+          <span className="font-medium">{syncToast}</span>
+        </div>
+      )}
+
+      {/* ==================== TOP NATIVE APPLICATION BAR ==================== */}
+      <header className="h-12 px-3 sm:px-2 flex items-center justify-between gap-3 shrink-0 bg-black z-20">
+        {/* Left Brand & Home */}
+        <div className="flex items-center gap-2.5">
+          <button
+            onClick={() => setActiveView('discover')}
+            className="flex items-center gap-2 group focus:outline-none"
+          >
+            <div className="w-8 h-8 rounded-xl bg-zinc-900 border border-white/10 flex items-center justify-center shadow-inner">
+              <img src="/icon.svg" alt="AURA" className="w-6 h-6" />
+            </div>
+            <div className="hidden sm:flex items-baseline gap-1.5">
+              <span className="font-extrabold tracking-tight text-[15px] text-white">AURA</span>
+              <span className="text-[9px] font-mono font-semibold tracking-widest text-zinc-500 uppercase">
+                STUDIO
+              </span>
+            </div>
+          </button>
+        </div>
+
+        {/* Center Search Pill + Segmented Source Engine Switcher */}
+        <div className="flex items-center gap-2 flex-1 max-w-2xl justify-center">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (searchQuery.trim()) fetchTracks(searchQuery.trim(), sourceMode);
+            }}
+            className="flex-1 max-w-md flex items-center bg-[#18181b] hover:bg-[#202024] focus-within:bg-[#202024] focus-within:ring-1 focus-within:ring-white/20 rounded-full px-3.5 h-9 transition-all border border-white/[0.04]"
+          >
+            <Search className="w-4 h-4 text-zinc-400 mr-2.5 shrink-0" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={
+                sourceMode === 'spotify'
+                  ? 'Cari lagu, artis, atau ketik potongan lirik...'
+                  : 'Cari lirik lagu, live session, atau remix di YT Music...'
+              }
+              className="bg-transparent w-full text-[13px] text-white placeholder-zinc-500 focus:outline-none"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="text-zinc-500 hover:text-zinc-300 ml-1"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </form>
+
+          {/* Dual Engine Pill Switcher: Spotify Mode <-> YT Music Mode */}
+          <div className="flex items-center bg-[#18181b] p-0.5 rounded-full border border-white/[0.06] shrink-0">
+            <button
+              onClick={() => handleSwitchMode('spotify')}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-all ${
+                sourceMode === 'spotify'
+                  ? 'bg-[#1DB954] text-black shadow-sm'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              <SpotifyIcon className="w-3.5 h-3.5" />
+              <span className="hidden md:inline">Spotify</span>
+            </button>
+            <button
+              onClick={() => handleSwitchMode('ytmusic')}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-all ${
+                sourceMode === 'ytmusic'
+                  ? 'bg-[#FF0033] text-white shadow-sm'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              <YTMusicIcon className="w-3.5 h-3.5" />
+              <span className="hidden md:inline">YT Music</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Right Studio Badges: Lossless Signal, Wrapped Sync & Install App */}
+        <div className="flex items-center gap-1.5">
+          {/* Lossless 24-Bit Master Badge */}
+          <button
+            onClick={() => {
+              setShowRightPanel(true);
+              setRightTab('eq');
+            }}
+            title="24-Bit / 96kHz Lossless Audio Engine"
+            className={`hidden sm:flex items-center gap-1.5 px-2.5 h-8 rounded-full text-[11px] font-mono font-semibold border transition-all ${
+              isLosslessEnabled
+                ? 'bg-amber-500/10 border-amber-400/30 text-amber-300 hover:bg-amber-500/15'
+                : 'bg-zinc-900 border-white/5 text-zinc-500'
+            }`}
+          >
+            <LosslessIcon className="w-4 h-3.5 text-amber-400" />
+            <span>HI-RES</span>
+          </button>
+
+          {/* Wrapped Bridge / Connect Spotify Account Pill */}
+          <button
+            onClick={() => setActiveView('wrapped')}
+            title="Hubungkan Akun Spotify & Pengaturan Wrapped Sync"
+            className={`flex items-center gap-1.5 px-2.5 h-8 rounded-full border text-[11px] font-semibold transition-all ${
+              spotifyAccount.connected
+                ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                : 'bg-[#18181b] hover:bg-[#222226] border-white/[0.08] text-zinc-200'
+            }`}
+          >
+            {spotifyAccount.connected && spotifyAccount.user?.avatar ? (
+              <img src={spotifyAccount.user.avatar} alt="" className="w-4 h-4 rounded-full object-cover" />
+            ) : (
+              <SpotifyIcon className="w-3.5 h-3.5 text-[#1DB954]" />
+            )}
+            <span className="hidden md:inline">
+              {spotifyAccount.connected
+                ? spotifyAccount.user?.displayName || 'Terhubung'
+                : 'Connect Spotify'}
+            </span>
+          </button>
+
+          {/* Install Native App / Phone APK Modal Trigger */}
+          <button
+            onClick={() => {
+              if (deferredPrompt) deferredPrompt.prompt();
+              else setShowInstallModal(true);
+            }}
+            className="flex items-center gap-1.5 px-3 h-8 rounded-full bg-white text-black hover:bg-zinc-200 text-xs font-bold transition-all"
+          >
+            <ArrowDownToLine className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Aplikasi HP</span>
+          </button>
+        </div>
+      </header>
+
+      {/* ==================== 3-ISLAND WORKSPACE ==================== */}
+      <div className="flex flex-1 min-h-0 gap-2 overflow-hidden px-0 sm:px-0">
+        {/* ---------- LEFT ISLAND: YOUR LIBRARY ---------- */}
+        <aside className="hidden lg:flex flex-col w-[275px] bg-[#121214] rounded-2xl border border-white/[0.05] overflow-hidden shrink-0">
+          <div className="p-4 pb-2 space-y-3">
+            <div className="flex items-center justify-between text-zinc-400">
+              <div className="flex items-center gap-2 font-bold text-sm text-zinc-200">
+                <Library className="w-4 h-4 text-zinc-400" />
+                <span>Koleksi Kamu</span>
+              </div>
+              <span className="text-[11px] font-mono text-zinc-500">HI-RES</span>
+            </div>
+
+            {/* Filter Chips */}
+            <div className="flex items-center gap-1.5">
+              {[
+                { id: 'all', label: 'Semua' },
+                { id: 'playlists', label: 'Mixes' },
+                { id: 'offline', label: 'Offline' }
+              ].map((chip) => (
+                <button
+                  key={chip.id}
+                  onClick={() => setLibraryFilter(chip.id)}
+                  className={`px-2.5 py-1 rounded-full text-xs font-medium transition-all ${
+                    libraryFilter === chip.id
+                      ? 'bg-white text-black font-semibold'
+                      : 'bg-zinc-800/80 text-zinc-300 hover:bg-zinc-800'
+                  }`}
+                >
+                  {chip.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-2 py-1 space-y-0.5">
+            {/* Pinned: Liked Songs */}
+            {(libraryFilter === 'all' || libraryFilter === 'playlists') && (
+              <button
+                onClick={() => setActiveView('liked')}
+                className={`w-full flex items-center gap-3 p-2 rounded-xl text-left transition-all ${
+                  activeView === 'liked' ? 'bg-white/[0.08]' : 'hover:bg-white/[0.04]'
+                }`}
+              >
+                <div className="w-11 h-11 rounded-lg bg-gradient-to-br from-indigo-600 via-violet-600 to-emerald-400 flex items-center justify-center shrink-0 shadow-md">
+                  <Heart className="w-5 h-5 text-white fill-white" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[13px] font-semibold text-white truncate">Lagu Disukai</p>
+                  <p className="text-xs text-zinc-400 truncate">Playlist • {likedTracks.length} lagu</p>
+                </div>
+              </button>
+            )}
+
+            {/* Pinned: Offline Hi-Res FLAC Vault */}
+            {(libraryFilter === 'all' || libraryFilter === 'offline') && (
+              <button
+                onClick={() => setActiveView('offline')}
+                className={`w-full flex items-center gap-3 p-2 rounded-xl text-left transition-all ${
+                  activeView === 'offline' ? 'bg-white/[0.08]' : 'hover:bg-white/[0.04]'
+                }`}
+              >
+                <div className="w-11 h-11 rounded-lg bg-gradient-to-br from-amber-500 to-yellow-800 flex items-center justify-center shrink-0 shadow-md">
+                  <Download className="w-5 h-5 text-black stroke-[2.4]" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[13px] font-semibold text-white truncate">Offline FLAC</p>
+                  <p className="text-xs text-amber-400/90 truncate">
+                    Tersimpan di HP • {offlineTracks.length} lagu
+                  </p>
+                </div>
+              </button>
+            )}
+
+            {/* Pinned: Spotify Wrapped Sync Tracker */}
+            {libraryFilter === 'all' && (
+              <button
+                onClick={() => setActiveView('wrapped')}
+                className={`w-full flex items-center gap-3 p-2 rounded-xl text-left transition-all ${
+                  activeView === 'wrapped' ? 'bg-white/[0.08]' : 'hover:bg-white/[0.04]'
+                }`}
+              >
+                <div className="w-11 h-11 rounded-lg bg-gradient-to-br from-[#1DB954] to-emerald-950 flex items-center justify-center shrink-0 shadow-md">
+                  <SpotifyIcon className="w-5 h-5 text-black" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[13px] font-semibold text-white truncate">Spotify Wrapped 2026</p>
+                  <p className="text-xs text-emerald-400 truncate">
+                    Auto-Bridge • {totalWrappedMinutes} mnt tercatat
+                  </p>
+                </div>
+              </button>
+            )}
+
+            {/* Real Imported User Spotify Playlists (when connected!) */}
+            {(libraryFilter === 'all' || libraryFilter === 'playlists') &&
+              userSpotifyPlaylists.map((pl) => (
+                <button
+                  key={pl.id}
+                  onClick={() => openSpotifyPlaylist(pl)}
+                  className="w-full flex items-center gap-3 p-2 rounded-xl text-left hover:bg-white/[0.05] transition-all"
+                >
+                  {pl.cover ? (
+                    <img
+                      src={pl.cover}
+                      alt={pl.name}
+                      className="w-11 h-11 rounded-lg object-cover shrink-0 bg-zinc-800"
+                    />
+                  ) : (
+                    <div className="w-11 h-11 rounded-lg bg-zinc-800 flex items-center justify-center shrink-0">
+                      <SpotifyIcon className="w-5 h-5 text-[#1DB954]" />
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[13px] font-semibold text-white truncate">{pl.name}</p>
+                    <p className="text-xs text-emerald-400/90 truncate">
+                      Spotify Playlist • {pl.trackCount} lagu
+                    </p>
+                  </div>
+                </button>
+              ))}
+
+            {/* Curated Mixes */}
+            {(libraryFilter === 'all' || libraryFilter === 'playlists') &&
+              CURATED_MIXES.map((mix) => (
+                <button
+                  key={mix.id}
+                  onClick={() => {
+                    if (mix.mode !== sourceMode) setSourceMode(mix.mode);
+                    fetchTracks(mix.query, mix.mode, mix.title);
+                  }}
+                  className="w-full flex items-center gap-3 p-2 rounded-xl text-left hover:bg-white/[0.04] transition-all"
+                >
+                  <img
+                    src={mix.cover}
+                    alt={mix.title}
+                    className="w-11 h-11 rounded-lg object-cover shrink-0 bg-zinc-800"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[13px] font-semibold text-zinc-100 truncate">{mix.title}</p>
+                    <p className="text-xs text-zinc-400 truncate">{mix.subtitle}</p>
+                  </div>
+                </button>
+              ))}
+          </div>
+        </aside>
+
+        {/* ---------- CENTER ISLAND: MAIN STAGE ---------- */}
+        <main className="flex-1 bg-[#121214] sm:rounded-2xl sm:border sm:border-white/[0.05] overflow-y-auto relative pb-28 sm:pb-6">
+          {/* Ambient Top Wash */}
+          <div className={`bg-gradient-to-b ${ambientGradient} px-5 sm:px-7 pt-5 pb-6`}>
+            {/* === VIEW 1: DISCOVER / HOME / SEARCH === */}
+            {activeView === 'discover' && (
+              <div className="space-y-6">
+                {/* Greeting + Mode Pill */}
+                <div className="flex items-center justify-between">
+                  <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight text-white">
+                    {greeting}
+                  </h1>
+                  <div className="flex items-center gap-1.5 text-xs text-zinc-400">
+                    {sourceMode === 'spotify' ? (
+                      <>
+                        <SpotifyIcon className="w-4 h-4 text-[#1DB954]" />
+                        <span>Spotify Hi-Res Engine</span>
+                      </>
+                    ) : (
+                      <>
+                        <YTMusicIcon className="w-4 h-4 text-[#FF0033]" />
+                        <span>YT Music Engine • Wrapped Synced</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {/* Iconic 6-Card Quick Picks Grid */}
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5">
+                  <div
+                    onClick={() => setActiveView('liked')}
+                    className="group flex items-center justify-between bg-white/[0.06] hover:bg-white/[0.12] rounded-lg overflow-hidden cursor-pointer transition-all pr-3"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-12 h-12 sm:w-14 sm:h-14 bg-gradient-to-br from-indigo-600 to-emerald-400 flex items-center justify-center shrink-0">
+                        <Heart className="w-5 h-5 text-white fill-white" />
+                      </div>
+                      <span className="font-bold text-xs sm:text-[13px] text-white truncate">
+                        Lagu Disukai
+                      </span>
+                    </div>
+                  </div>
+
+                  <div
+                    onClick={() => setActiveView('offline')}
+                    className="group flex items-center justify-between bg-white/[0.06] hover:bg-white/[0.12] rounded-lg overflow-hidden cursor-pointer transition-all pr-3"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-12 h-12 sm:w-14 sm:h-14 bg-gradient-to-br from-amber-500 to-yellow-800 flex items-center justify-center shrink-0">
+                        <Download className="w-5 h-5 text-black stroke-[2.3]" />
+                      </div>
+                      <span className="font-bold text-xs sm:text-[13px] text-white truncate">
+                        Offline FLAC ({offlineTracks.length})
+                      </span>
+                    </div>
+                  </div>
+
+                  {CURATED_MIXES.map((mix) => (
+                    <div
+                      key={mix.id}
+                      onClick={() => {
+                        if (mix.mode !== sourceMode) setSourceMode(mix.mode);
+                        fetchTracks(mix.query, mix.mode, mix.title);
+                      }}
+                      className="group flex items-center justify-between bg-white/[0.06] hover:bg-white/[0.12] rounded-lg overflow-hidden cursor-pointer transition-all pr-3"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <img
+                          src={mix.cover}
+                          alt={mix.title}
+                          className="w-12 h-12 sm:w-14 sm:h-14 object-cover shrink-0"
+                        />
+                        <span className="font-bold text-xs sm:text-[13px] text-white truncate">
+                          {mix.title}
+                        </span>
+                      </div>
+                      <div
+                        className={`w-8 h-8 rounded-full hidden sm:flex items-center justify-center opacity-0 group-hover:opacity-100 translate-y-1 group-hover:translate-y-0 transition-all shadow-lg shrink-0 ${accentBg}`}
+                      >
+                        <Play className="w-3.5 h-3.5 fill-current ml-0.5" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* === COLLECTION HEADER FOR LIKED / OFFLINE === */}
+            {(activeView === 'liked' || activeView === 'offline') && (
+              <div className="flex flex-col sm:flex-row items-start sm:items-end gap-5 pt-2">
+                <div
+                  className={`w-36 h-36 sm:w-44 sm:h-44 rounded-2xl shadow-2xl flex items-center justify-center shrink-0 ${
+                    activeView === 'liked'
+                      ? 'bg-gradient-to-br from-indigo-600 via-violet-600 to-emerald-400'
+                      : 'bg-gradient-to-br from-amber-400 via-amber-600 to-stone-900'
+                  }`}
+                >
+                  {activeView === 'liked' ? (
+                    <Heart className="w-16 h-16 text-white fill-white" />
+                  ) : (
+                    <Download className="w-16 h-16 text-black stroke-[2.2]" />
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <span className="text-[11px] font-bold uppercase tracking-widest text-zinc-300">
+                    {activeView === 'liked' ? 'Koleksi Pribadi' : 'Penyimpanan Perangkat • Tanpa Kuota'}
+                  </span>
+                  <h1 className="text-3xl sm:text-5xl font-black tracking-tight text-white">
+                    {activeView === 'liked' ? 'Lagu Disukai' : 'Offline Hi-Res FLAC'}
+                  </h1>
+                  <p className="text-xs sm:text-sm text-zinc-400">
+                    {activeView === 'liked'
+                      ? `${likedTracks.length} lagu tersimpan • Otomatis tersinkron ke Spotify Wrapped`
+                      : `${offlineTracks.length} file FLAC 24-Bit siap diputar tanpa internet di HP & Desktop`}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* === VIEW: SPOTIFY WRAPPED 2026 BRIDGE === */}
+            {activeView === 'wrapped' && (
+              <div className="space-y-6 pt-2">
+                <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+                  <div className="space-y-1.5">
+                    <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-[11px] font-semibold">
+                      <SpotifyIcon className="w-3.5 h-3.5" />
+                      <span>DUAL-MODE SCROBBLER BRIDGE</span>
+                    </div>
+                    <h1 className="text-2xl sm:text-4xl font-black tracking-tight text-white">
+                      Spotify Wrapped Sync
+                    </h1>
+                    <p className="text-xs sm:text-sm text-zinc-400 max-w-2xl">
+                      Dengar lagu, live acoustic, atau remix dari YouTube Music maupun Offline FLAC tanpa takut ketinggalan Spotify Wrapped. Setiap pemutaran otomatis dicocokkan ke URI lagu Spotify kamu.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setWrappedSyncEnabled(!wrappedSyncEnabled)}
+                    className={`px-4 py-2 rounded-full text-xs font-bold shrink-0 transition-all ${
+                      wrappedSyncEnabled
+                        ? 'bg-[#1DB954] text-black'
+                        : 'bg-zinc-800 text-zinc-400'
+                    }`}
+                  >
+                    {wrappedSyncEnabled ? '● Auto-Sync Aktif' : 'Auto-Sync Nonaktif'}
+                  </button>
+                </div>
+
+                {/* Stats Cards */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/[0.06]">
+                    <p className="text-xs text-zinc-400">Total Durasi Tercatat</p>
+                    <p className="text-2xl font-extrabold text-white mt-1 font-mono">
+                      {totalWrappedMinutes} <span className="text-xs font-sans text-emerald-400">menit</span>
+                    </p>
+                  </div>
+                  <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/[0.06]">
+                    <p className="text-xs text-zinc-400">Lagu Disinkronkan Sesi Ini</p>
+                    <p className="text-2xl font-extrabold text-white mt-1 font-mono">
+                      {wrappedLogs.length} <span className="text-xs font-sans text-zinc-400">lagu</span>
+                    </p>
+                  </div>
+                  <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/[0.06]">
+                    <p className="text-xs text-zinc-400">Mode Bridge</p>
+                    <p className="text-sm font-bold text-emerald-400 mt-2">
+                      Spotify + YT Music + Offline
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* ==================== TRACK TABLE / CONTENT BODY ==================== */}
+          <div className="px-4 sm:px-7 py-2">
+            {activeView === 'wrapped' ? (
+              <div className="space-y-5">
+                {/* Official 1-Click Spotify OAuth 2.0 PKCE Login Card */}
+                <div className="p-5 rounded-2xl bg-white/[0.03] border border-white/[0.08] space-y-4">
+                  {spotifyAccount.connected ? (
+                    <div className="flex flex-wrap items-center justify-between gap-4">
+                      <div className="flex items-center gap-3.5">
+                        {spotifyAccount.user?.avatar ? (
+                          <img
+                            src={spotifyAccount.user.avatar}
+                            alt=""
+                            className="w-14 h-14 rounded-full object-cover border-2 border-[#1DB954]"
+                          />
+                        ) : (
+                          <div className="w-14 h-14 rounded-full bg-[#1DB954] text-black flex items-center justify-center font-black text-xl">
+                            {(spotifyAccount.user?.displayName || 'S')[0]}
+                          </div>
+                        )}
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-base font-extrabold text-white">
+                              {spotifyAccount.user?.displayName}
+                            </h3>
+                            <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-bold uppercase">
+                              {spotifyAccount.user?.product || 'Connected'}
+                            </span>
+                          </div>
+                          <p className="text-xs text-zinc-400 mt-0.5">
+                            ✓ Playlist Spotify kamu sudah muncul di Sidebar Kiri & Wrapped Sync aktif otomatis!
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          await apiLogoutSpotify();
+                          refreshSpotifyConnection();
+                        }}
+                        className="px-4 py-2 rounded-full bg-zinc-800 hover:bg-zinc-700 text-xs font-bold text-zinc-300"
+                      >
+                        Putuskan Akun
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div>
+                          <h3 className="text-sm font-extrabold text-white flex items-center gap-2">
+                            <SpotifyIcon className="w-4 h-4 text-[#1DB954]" />
+                            <span>Cara Connect Akun Spotify Kamu (1-Klik Resmi OAuth PKCE)</span>
+                          </h3>
+                          <p className="text-xs text-zinc-400 mt-0.5">
+                            Tanpa password & aman 100% langsung lewat halaman login resmi Spotify:
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                        <div className="p-3 rounded-xl bg-black/50 border border-white/[0.06] space-y-1">
+                          <span className="text-[10px] font-mono font-bold text-emerald-400">LANGKAH 1</span>
+                          <p className="text-zinc-300 leading-relaxed">
+                            Buka{' '}
+                            <a
+                              href="https://developer.spotify.com/dashboard"
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-[#1DB954] underline font-bold"
+                            >
+                              developer.spotify.com/dashboard
+                            </a>{' '}
+                            lalu klik tombol <b>Create App</b>.
+                          </p>
+                        </div>
+
+                        <div className="p-3 rounded-xl bg-black/50 border border-white/[0.06] space-y-1.5">
+                          <span className="text-[10px] font-mono font-bold text-emerald-400">LANGKAH 2</span>
+                          <p className="text-zinc-300">
+                            Isi kolom <b>Redirect URIs</b> dengan alamat ini:
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(
+                                spotifyAccount.redirectUri || 'http://127.0.0.1:3001/api/spotify/callback'
+                              );
+                              setCopiedRedirect(true);
+                              setTimeout(() => setCopiedRedirect(false), 2000);
+                            }}
+                            className="w-full px-2.5 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-white/10 font-mono text-[10px] text-amber-300 flex items-center justify-between"
+                          >
+                            <span className="truncate">http://127.0.0.1:3001/api/spotify/callback</span>
+                            <span className="text-white font-sans font-bold ml-1 shrink-0">
+                              {copiedRedirect ? 'Copied!' : 'Copy'}
+                            </span>
+                          </button>
+                        </div>
+
+                        <div className="p-3 rounded-xl bg-black/50 border border-white/[0.06] space-y-1">
+                          <span className="text-[10px] font-mono font-bold text-emerald-400">LANGKAH 3</span>
+                          <p className="text-zinc-300 leading-relaxed">
+                            Centang <b>Web API</b>, klik <b>Save</b>, lalu salin <b>Client ID</b> kamu ke kolom di bawah ini.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col sm:flex-row gap-2.5 pt-1">
+                        <input
+                          type="text"
+                          value={spotifyClientId}
+                          onChange={(e) => setSpotifyClientId(e.target.value)}
+                          placeholder="Paste Spotify Client ID di sini (contoh: 4b8f9c2d1e...)"
+                          className="flex-1 px-4 py-2.5 rounded-xl bg-black/60 border border-white/15 text-xs text-white font-mono focus:outline-none focus:border-[#1DB954]"
+                        />
+                        <button
+                          onClick={handleSpotifyOAuthLogin}
+                          className="px-6 py-2.5 rounded-xl bg-[#1DB954] hover:bg-emerald-400 text-black font-extrabold text-xs flex items-center justify-center gap-2 transition-all shadow-lg shrink-0"
+                        >
+                          <SpotifyIcon className="w-4 h-4" />
+                          <span>Login dengan Spotify</span>
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* Live Sync Log List */}
+                <div className="space-y-2">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-500">
+                    Riwayat Sinkronisasi Real-Time
+                  </h3>
+                  {wrappedLogs.length === 0 ? (
+                    <div className="py-10 text-center text-xs text-zinc-500">
+                      Putar lagu apa saja di mode Spotify atau YT Music untuk melihat log sinkronisasi Wrapped secara langsung.
+                    </div>
+                  ) : (
+                    wrappedLogs.map((log) => (
+                      <div
+                        key={log.id}
+                        className="flex items-center justify-between p-3 rounded-xl bg-white/[0.03] border border-white/[0.05]"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          {log.cover ? (
+                            <img src={log.cover} alt="" className="w-10 h-10 rounded-lg object-cover" />
+                          ) : (
+                            <div className="w-10 h-10 rounded-lg bg-zinc-800 flex items-center justify-center">
+                              <SpotifyIcon className="w-4 h-4 text-[#1DB954]" />
+                            </div>
+                          )}
+                          <div className="min-w-0">
+                            <p className="text-[13px] font-semibold text-white truncate">{log.title}</p>
+                            <p className="text-xs text-zinc-400 truncate">
+                              {log.artist} • <span className="text-zinc-300">{log.playedVia}</span>
+                            </p>
+                          </div>
+                        </div>
+                        <span className="px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-300 text-[11px] font-semibold shrink-0">
+                          ✓ Tercatat
+                        </span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            ) : (
+              <>
+                {/* Section Title & Play All Action */}
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-3">
+                    {activeDisplayedTracks.length > 0 && (
+                      <button
+                        onClick={() => playTrack(activeDisplayedTracks[0])}
+                        className={`w-11 h-11 rounded-full flex items-center justify-center shadow-xl hover:scale-105 active:scale-95 transition-all ${accentBg}`}
+                      >
+                        <Play className="w-5 h-5 fill-current ml-0.5" />
+                      </button>
+                    )}
+                    <div>
+                      <h2 className="text-base sm:text-lg font-bold text-white">
+                        {activeView === 'discover'
+                          ? activeFeedTitle
+                          : activeView === 'liked'
+                          ? 'Daftar Lagu Disukai'
+                          : 'File FLAC Tersimpan'}
+                      </h2>
+                      <p className="text-xs text-zinc-500">
+                        Full-Length Stream • Real-Time 24-Bit/96kHz Lossless DSP
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Quick Artist Filter Pills on Discover */}
+                  {activeView === 'discover' && (
+                    <div className="hidden xl:flex items-center gap-1.5">
+                      {['Tulus', 'Mahalini', 'Bernadya', 'Hindia', 'The Weeknd', 'Joji'].map((art) => (
+                        <button
+                          key={art}
+                          onClick={() => {
+                            setSearchQuery(art);
+                            fetchTracks(art, sourceMode);
+                          }}
+                          className="px-3 py-1 rounded-full bg-white/[0.05] hover:bg-white/[0.1] text-xs font-medium text-zinc-300 transition-all"
+                        >
+                          {art}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Professional Spotify-Style Track Table Header */}
+                <div className="grid grid-cols-[32px_1fr_auto] md:grid-cols-[36px_1.6fr_1fr_110px] items-center px-3 py-2 border-b border-white/[0.06] text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+                  <span className="text-center">#</span>
+                  <span>Judul</span>
+                  <span className="hidden md:block">Album</span>
+                  <span className="text-right pr-2">Durasi</span>
+                </div>
+
+                {/* Track Rows */}
+                {isLoading && activeView === 'discover' ? (
+                  <div className="space-y-1.5 pt-2">
+                    {[1, 2, 3, 4, 5, 6, 7].map((i) => (
+                      <div
+                        key={i}
+                        className="h-14 rounded-xl bg-white/[0.03] animate-pulse"
+                      />
+                    ))}
+                  </div>
+                ) : activeDisplayedTracks.length === 0 ? (
+                  <div className="py-16 text-center space-y-2">
+                    <p className="text-sm font-semibold text-zinc-300">Belum ada lagu di daftar ini</p>
+                    <p className="text-xs text-zinc-500">
+                      {activeView === 'offline'
+                        ? 'Klik ikon Download di sebelah kanan lagu mana saja untuk mengunduh file FLAC 24-Bit.'
+                        : 'Klik ikon Hati pada lagu favoritmu untuk menyimpannya ke koleksi ini.'}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-white/[0.02] pt-1">
+                    {activeDisplayedTracks.map((track, idx) => {
+                      const isCurrent = currentTrack?.id === track.id;
+                      const liked = isLiked(track.id);
+                      const savedOffline = isOffline(track.id);
+                      const dlPct = downloadingIds[track.id];
+
+                      return (
+                        <div
+                          key={track.id}
+                          onClick={() => playTrack(track)}
+                          className={`group grid grid-cols-[32px_1fr_auto] md:grid-cols-[36px_1.6fr_1fr_110px] items-center px-3 py-2 rounded-xl cursor-pointer transition-colors ${
+                            isCurrent ? 'bg-white/[0.09]' : 'hover:bg-white/[0.05]'
+                          }`}
+                        >
+                          {/* # or Animated Equalizer */}
+                          <div className="flex items-center justify-center text-xs font-mono text-zinc-500">
+                            {isCurrent && isPlaying ? (
+                              <PlayingBars
+                                colorClass={sourceMode === 'spotify' ? 'bg-[#1DB954]' : 'bg-[#FF0033]'}
+                              />
+                            ) : (
+                              <>
+                                <span className={`group-hover:hidden ${isCurrent ? accentText : ''}`}>
+                                  {idx + 1}
+                                </span>
+                                <Play className="w-3.5 h-3.5 text-white fill-white hidden group-hover:block" />
+                              </>
+                            )}
+                          </div>
+
+                          {/* Cover + Title + Artist + Subtle Lossless Tag */}
+                          <div className="flex items-center gap-3 min-w-0 pr-3">
+                            <img
+                              src={track.cover}
+                              alt={track.title}
+                              className="w-10 h-10 rounded-md object-cover bg-zinc-800 shrink-0"
+                            />
+                            <div className="min-w-0">
+                              <p
+                                className={`text-[13.5px] font-semibold truncate ${
+                                  isCurrent ? accentText : 'text-white'
+                                }`}
+                              >
+                                {track.title}
+                              </p>
+                              <div className="flex items-center gap-1.5 text-xs text-zinc-400 truncate">
+                                <span className="inline-flex items-center gap-0.5 px-1 py-[1px] rounded bg-amber-400/15 text-amber-300 text-[9px] font-mono font-bold shrink-0">
+                                  LOSSLESS
+                                </span>
+                                {savedOffline && (
+                                  <span className="inline-flex items-center px-1 py-[1px] rounded bg-emerald-500/20 text-emerald-300 text-[9px] font-bold shrink-0">
+                                    OFFLINE
+                                  </span>
+                                )}
+                                <span className="truncate">{track.artist}</span>
+                              </div>
+                              {track.lyricMatch?.matched && (
+                                <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-500/25 text-emerald-300 text-[11px] font-medium max-w-full truncate">
+                                    <Mic2 className="w-3 h-3 text-[#1DB954] shrink-0" />
+                                    <span className="truncate">
+                                      Lirik cocok: &ldquo;{track.lyricMatch.line}&rdquo;
+                                    </span>
+                                  </span>
+                                  {track.lyricMatch.time != null && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        playTrack(track, track.lyricMatch.time);
+                                      }}
+                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white/10 hover:bg-white/20 text-white text-[10px] font-mono font-bold transition-colors shrink-0"
+                                      title="Langsung putar pada detik lirik ini dinyanyikan"
+                                    >
+                                      <Play className="w-2.5 h-2.5 fill-current" />
+                                      <span>Putar di {formatTime(track.lyricMatch.time)}</span>
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Album */}
+                          <div className="hidden md:block text-xs text-zinc-400 truncate pr-4">
+                            {track.album}
+                          </div>
+
+                          {/* Actions (Heart + FLAC Download/Delete) + Duration */}
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              onClick={(e) => toggleLike(track, e)}
+                              title="Simpan ke Lagu Disukai"
+                              className={`p-1.5 rounded-full transition-opacity ${
+                                liked
+                                  ? 'text-[#1DB954] opacity-100'
+                                  : 'text-zinc-400 hover:text-white sm:opacity-0 sm:group-hover:opacity-100'
+                              }`}
+                            >
+                              <Heart className={`w-4 h-4 ${liked ? 'fill-current' : ''}`} />
+                            </button>
+
+                            {activeView === 'offline' ? (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  deleteOfflineTrack(track.id).then(loadOfflineLibrary);
+                                }}
+                                title="Hapus file Offline"
+                                className="p-1.5 rounded-full text-zinc-400 hover:text-rose-400"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            ) : dlPct !== undefined ? (
+                              <span className="text-[10px] font-mono text-amber-300 w-7 text-center">
+                                {dlPct}%
+                              </span>
+                            ) : (
+                              <button
+                                onClick={(e) => handleDownloadOffline(track, true, e)}
+                                title={
+                                  savedOffline
+                                    ? 'Tersimpan Offline (Klik untuk ekspor ulang .flac)'
+                                    : 'Download 24-Bit FLAC ke HP'
+                                }
+                                className={`p-1.5 rounded-full transition-opacity ${
+                                  savedOffline
+                                    ? 'text-amber-400 opacity-100'
+                                    : 'text-zinc-400 hover:text-amber-300 sm:opacity-0 sm:group-hover:opacity-100'
+                                }`}
+                              >
+                                {savedOffline ? (
+                                  <CheckCircle2 className="w-4 h-4" />
+                                ) : (
+                                  <Download className="w-4 h-4" />
+                                )}
+                              </button>
+                            )}
+
+                            <span className="text-xs font-mono text-zinc-500 w-10 text-right">
+                              {formatTime(track.duration)}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </main>
+
+        {/* ---------- RIGHT ISLAND: NOW PLAYING / LIVE LYRICS / DAC EQ ---------- */}
+        {showRightPanel && (
+          <aside className="hidden xl:flex flex-col w-[325px] bg-[#121214] rounded-2xl border border-white/[0.05] overflow-hidden shrink-0">
+            {/* Panel Switcher */}
+            <div className="p-3 border-b border-white/[0.05] flex items-center justify-between gap-1">
+              <div className="flex items-center bg-black/50 p-0.5 rounded-xl flex-1">
+                {[
+                  { id: 'playing', label: 'Playing' },
+                  { id: 'lyrics', label: 'Lirik' },
+                  { id: 'eq', label: 'DAC / EQ' }
+                ].map((tab) => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setRightTab(tab.id)}
+                    className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                      rightTab === tab.id
+                        ? 'bg-zinc-800 text-white shadow'
+                        : 'text-zinc-400 hover:text-zinc-200'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={() => setShowRightPanel(false)}
+                className="p-1.5 text-zinc-500 hover:text-zinc-300 rounded-lg"
+                title="Tutup panel kanan"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-5">
+              {/* SUB-TAB 1: NOW PLAYING & SIGNAL PATH */}
+              {rightTab === 'playing' && currentTrack && (
+                <>
+                  <div className="relative group rounded-2xl overflow-hidden shadow-2xl bg-zinc-900 aspect-square">
+                    <img
+                      src={currentTrack.cover}
+                      alt={currentTrack.title}
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <h3 className="font-extrabold text-base text-white leading-snug line-clamp-2">
+                        {currentTrack.title}
+                      </h3>
+                      <p className="text-sm text-zinc-400 mt-0.5 truncate">{currentTrack.artist}</p>
+                    </div>
+                    <button
+                      onClick={() => toggleLike(currentTrack)}
+                      className={`p-1.5 rounded-full shrink-0 ${
+                        isLiked(currentTrack.id) ? 'text-[#1DB954]' : 'text-zinc-400 hover:text-white'
+                      }`}
+                    >
+                      <Heart className={`w-5 h-5 ${isLiked(currentTrack.id) ? 'fill-current' : ''}`} />
+                    </button>
+                  </div>
+
+                  {/* Apple Music / Tidal Inspired Lossless Signal Path Card */}
+                  <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/[0.06] space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-amber-300 flex items-center gap-1.5">
+                        <LosslessIcon className="w-4 h-3.5" />
+                        <span>Audio Signal Path</span>
+                      </span>
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-400/15 text-amber-300 font-bold">
+                        24-BIT / 96KHZ
+                      </span>
+                    </div>
+                    <div className="space-y-1.5 text-xs">
+                      <div className="flex items-center justify-between text-zinc-400">
+                        <span>Source Stream</span>
+                        <span className="text-zinc-200 font-medium">
+                          {sourceMode === 'spotify' ? 'Spotify ISRC Master' : 'YT Music Opus 251'}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-zinc-400">
+                        <span>DSP Mastering</span>
+                        <span className="text-amber-300 font-mono text-[11px]">
+                          {isLosslessEnabled ? `Active (${activePreset})` : 'Bypass'}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-zinc-400">
+                        <span>Spotify Wrapped</span>
+                        <span className="text-emerald-400 font-medium">✓ Auto-Scrobbled</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Up Next Queue */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-zinc-300">Berikutnya di Antrean</span>
+                    </div>
+                    {activeDisplayedTracks
+                      .slice(
+                        Math.max(0, activeDisplayedTracks.findIndex((t) => t.id === currentTrack.id) + 1),
+                        Math.max(0, activeDisplayedTracks.findIndex((t) => t.id === currentTrack.id) + 4)
+                      )
+                      .map((nextTrack) => (
+                        <div
+                          key={nextTrack.id}
+                          onClick={() => playTrack(nextTrack)}
+                          className="flex items-center gap-2.5 p-2 rounded-xl hover:bg-white/[0.05] cursor-pointer transition-colors"
+                        >
+                          <img
+                            src={nextTrack.cover}
+                            alt=""
+                            className="w-9 h-9 rounded-md object-cover shrink-0"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs font-semibold text-zinc-200 truncate">
+                              {nextTrack.title}
+                            </p>
+                            <p className="text-[11px] text-zinc-500 truncate">{nextTrack.artist}</p>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                </>
+              )}
+
+              {/* SUB-TAB 2: LIVE TIME-SYNCED KARAOKE LYRICS */}
+              {rightTab === 'lyrics' && (
+                <div className="space-y-3 py-2">
+                  {lyricsData.loading ? (
+                    <div className="py-16 flex flex-col items-center justify-center gap-2 text-zinc-500">
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      <span className="text-xs">Memuat lirik sinkron...</span>
+                    </div>
+                  ) : !lyricsData.found ? (
+                    <div className="py-16 text-center space-y-1">
+                      <Mic2 className="w-7 h-7 text-zinc-600 mx-auto mb-2" />
+                      <p className="text-xs font-semibold text-zinc-400">Lirik belum tersedia</p>
+                      <p className="text-[11px] text-zinc-600">Putar lagu lain untuk lirik karaoke otomatis.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3.5 pb-12">
+                      {lyricsData.lines.map((line, i) => {
+                        const isActive = i === activeLyricIndex;
+                        const isPast = i < activeLyricIndex;
+                        return (
+                          <p
+                            key={i}
+                            ref={isActive ? activeLyricRef : null}
+                            onClick={() => {
+                              if (audioRef.current) {
+                                audioRef.current.currentTime = line.time;
+                                setProgress(line.time);
+                              }
+                            }}
+                            className={`cursor-pointer transition-all duration-300 leading-relaxed ${
+                              isActive
+                                ? 'text-white font-extrabold text-[17px] scale-[1.01]'
+                                : isPast
+                                ? 'text-zinc-600 font-semibold text-sm hover:text-zinc-300'
+                                : 'text-zinc-400/80 font-semibold text-sm hover:text-zinc-200'
+                            }`}
+                          >
+                            {line.text}
+                          </p>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* SUB-TAB 3: STUDIO 24-BIT DAC & 5-BAND PARAMETRIC EQ */}
+              {rightTab === 'eq' && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between p-3 rounded-xl bg-amber-500/10 border border-amber-500/25">
+                    <div>
+                      <p className="text-xs font-bold text-amber-300">96kHz Lossless DSP</p>
+                      <p className="text-[11px] text-zinc-400">32-bit float audio pipeline</p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        const next = !isLosslessEnabled;
+                        setIsLosslessEnabled(next);
+                        dspEngine.setLosslessMode(next);
+                      }}
+                      className={`px-3 py-1 rounded-full text-[11px] font-bold ${
+                        isLosslessEnabled ? 'bg-amber-400 text-black' : 'bg-zinc-800 text-zinc-400'
+                      }`}
+                    >
+                      {isLosslessEnabled ? 'ON' : 'OFF'}
+                    </button>
+                  </div>
+
+                  {/* Real-time Spectrum Analyzer */}
+                  <div className="h-20 bg-black/60 rounded-xl p-2.5 border border-white/[0.05] flex items-end justify-between gap-[3px]">
+                    {spectrumBars.map((h, i) => (
+                      <div
+                        key={i}
+                        style={{ height: `${isPlaying ? h : 10}%` }}
+                        className={`flex-1 rounded-t-sm transition-all duration-75 ${
+                          sourceMode === 'spotify'
+                            ? 'bg-gradient-to-t from-emerald-600 to-amber-300'
+                            : 'bg-gradient-to-t from-rose-600 to-amber-300'
+                        }`}
+                      />
+                    ))}
+                  </div>
+
+                  {/* Acoustic Presets */}
+                  <div className="space-y-1.5">
+                    <span className="text-[11px] font-semibold text-zinc-400">Preset Akustik</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {Object.keys(EQ_PRESETS).map((preset) => (
+                        <button
+                          key={preset}
+                          onClick={() => applyPreset(preset)}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all ${
+                            activePreset === preset
+                              ? 'bg-white text-black font-bold'
+                              : 'bg-white/[0.05] text-zinc-300 hover:bg-white/[0.1]'
+                          }`}
+                        >
+                          {preset}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 5-Band Sliders */}
+                  <div className="space-y-3 pt-1">
+                    {['60Hz Sub-Bass', '230Hz Warmth', '910Hz Vocal Mid', '3.6kHz Presence', '14kHz Hi-Res Air'].map(
+                      (bandLabel, idx) => (
+                        <div key={bandLabel} className="space-y-1">
+                          <div className="flex justify-between text-[11px]">
+                            <span className="text-zinc-300 font-medium">{bandLabel}</span>
+                            <span className="font-mono text-amber-300">
+                              {eqGains[idx] > 0 ? `+${eqGains[idx]}` : eqGains[idx]} dB
+                            </span>
+                          </div>
+                          <input
+                            type="range"
+                            min="-6"
+                            max="6"
+                            step="0.5"
+                            value={eqGains[idx]}
+                            onChange={(e) => handleEqSlider(idx, e.target.value)}
+                            className="w-full aura-slider"
+                          />
+                        </div>
+                      )
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </aside>
+        )}
+      </div>
+
+      {/* ==================== BOTTOM PLAYER CONTROLLER ==================== */}
+      <footer className="h-[78px] bg-black px-3 sm:px-4 flex items-center justify-between gap-4 shrink-0 border-t border-white/[0.06] sm:border-none z-30">
+        {/* Left: Now Playing Info (Tap to open Fullscreen Player on Mobile!) */}
+        <div
+          onClick={() => {
+            if (window.innerWidth < 1280) setIsFullscreenPlayer(true);
+          }}
+          className="flex items-center gap-3 min-w-0 flex-1 max-w-[30%] cursor-pointer xl:cursor-default"
+        >
+          {currentTrack && (
+            <>
+              <div className="relative w-12 h-12 rounded-lg overflow-hidden bg-zinc-900 shrink-0 group">
+                <img
+                  src={currentTrack.cover}
+                  alt={currentTrack.title}
+                  className="w-full h-full object-cover"
+                />
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsFullscreenPlayer(true);
+                  }}
+                  className="hidden sm:flex absolute inset-0 bg-black/50 items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="Layar Penuh"
+                >
+                  <Maximize2 className="w-4 h-4 text-white" />
+                </button>
+              </div>
+              <div className="min-w-0">
+                <p className="text-[13px] font-bold text-white truncate">{currentTrack.title}</p>
+                <div className="flex items-center gap-1.5 text-xs text-zinc-400 truncate">
+                  <span className="truncate">{currentTrack.artist}</span>
+                  <span className="hidden sm:inline text-[9px] font-mono px-1 rounded bg-amber-400/15 text-amber-300 font-bold shrink-0">
+                    24-BIT
+                  </span>
+                </div>
+              </div>
+              <button
+                onClick={(e) => toggleLike(currentTrack, e)}
+                className={`hidden sm:block p-1.5 shrink-0 ${
+                  isLiked(currentTrack.id) ? 'text-[#1DB954]' : 'text-zinc-400 hover:text-white'
+                }`}
+              >
+                <Heart className={`w-4 h-4 ${isLiked(currentTrack.id) ? 'fill-current' : ''}`} />
+              </button>
+            </>
+          )}
+        </div>
+
+        {/* Center: Transport Controls + Precision Seek Bar */}
+        <div className="flex flex-col items-center justify-center flex-1 max-w-xl gap-1.5">
+          <div className="flex items-center gap-4 sm:gap-5">
+            <button
+              onClick={() => setIsShuffle(!isShuffle)}
+              className={`hidden sm:block transition-colors ${
+                isShuffle ? accentText : 'text-zinc-400 hover:text-white'
+              }`}
+              title="Acak"
+            >
+              <Shuffle className="w-4 h-4" />
+            </button>
+
+            <button onClick={playPrev} className="text-zinc-300 hover:text-white transition-colors">
+              <SkipBack className="w-4 h-4 fill-current" />
+            </button>
+
+            <button
+              onClick={togglePlayPause}
+              className="w-9 h-9 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 active:scale-95 transition-transform shadow-md"
+            >
+              {isBuffering ? (
+                <Loader2 className="w-4 h-4 animate-spin text-black" />
+              ) : isPlaying ? (
+                <Pause className="w-4 h-4 fill-current" />
+              ) : (
+                <Play className="w-4 h-4 fill-current ml-0.5" />
+              )}
+            </button>
+
+            <button onClick={playNext} className="text-zinc-300 hover:text-white transition-colors">
+              <SkipForward className="w-4 h-4 fill-current" />
+            </button>
+
+            <button
+              onClick={() => setIsRepeat(!isRepeat)}
+              className={`hidden sm:block transition-colors ${
+                isRepeat ? accentText : 'text-zinc-400 hover:text-white'
+              }`}
+              title="Ulangi Lagu"
+            >
+              <Repeat className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Seek Bar with Timestamps */}
+          <div className="w-full hidden sm:flex items-center gap-2.5 text-[11px] font-mono text-zinc-500">
+            <span className="w-8 text-right">{formatTime(progress)}</span>
+            <div
+              onClick={(e) => {
+                if (!audioRef.current) return;
+                const rect = e.currentTarget.getBoundingClientRect();
+                const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+                const seekTo = ratio * (duration || 1);
+                audioRef.current.currentTime = seekTo;
+                setProgress(seekTo);
+              }}
+              className="group flex-1 h-1 hover:h-1.5 bg-zinc-800 rounded-full cursor-pointer relative transition-all"
+            >
+              <div
+                style={{ width: `${Math.min(100, (progress / (duration || 1)) * 100)}%` }}
+                className={`h-full rounded-full relative ${accentBar}`}
+              >
+                <span className="w-3 h-3 rounded-full bg-white shadow absolute right-0 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity" />
+              </div>
+            </div>
+            <span className="w-8">{formatTime(duration)}</span>
+          </div>
+        </div>
+
+        {/* Right: Lyrics, DAC/EQ, Offline FLAC Download, Volume & Fullscreen */}
+        <div className="hidden md:flex items-center justify-end gap-2.5 flex-1 max-w-[30%]">
+          <button
+            onClick={() => {
+              setShowRightPanel(true);
+              setRightTab('lyrics');
+            }}
+            title="Lirik Live"
+            className={`p-1.5 rounded-lg transition-colors ${
+              showRightPanel && rightTab === 'lyrics' ? accentText : 'text-zinc-400 hover:text-white'
+            }`}
+          >
+            <Mic2 className="w-4 h-4" />
+          </button>
+
+          <button
+            onClick={() => {
+              setShowRightPanel(true);
+              setRightTab('eq');
+            }}
+            title="24-Bit Lossless DAC & Equalizer"
+            className={`p-1.5 rounded-lg transition-colors ${
+              showRightPanel && rightTab === 'eq' ? 'text-amber-400' : 'text-zinc-400 hover:text-white'
+            }`}
+          >
+            <Sliders className="w-4 h-4" />
+          </button>
+
+          {currentTrack && (
+            <button
+              onClick={() => handleDownloadOffline(currentTrack, true)}
+              title="Download 24-Bit FLAC ke Perangkat"
+              className="p-1.5 rounded-lg text-zinc-400 hover:text-amber-300 transition-colors"
+            >
+              {downloadingIds[currentTrack.id] !== undefined ? (
+                <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
+              ) : (
+                <Download className="w-4 h-4" />
+              )}
+            </button>
+          )}
+
+          {/* Volume Control */}
+          <div className="flex items-center gap-1.5 w-24">
+            <button
+              onClick={() => {
+                const nextMute = !isMuted;
+                setIsMuted(nextMute);
+                if (audioRef.current) audioRef.current.volume = nextMute ? 0 : volume;
+              }}
+              className="text-zinc-400 hover:text-white"
+            >
+              {isMuted || volume === 0 ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+            </button>
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.02"
+              value={isMuted ? 0 : volume}
+              onChange={(e) => {
+                const v = parseFloat(e.target.value);
+                setVolume(v);
+                setIsMuted(v === 0);
+                if (audioRef.current) audioRef.current.volume = v;
+              }}
+              className="w-full aura-slider"
+            />
+          </div>
+
+          <button
+            onClick={() => setIsFullscreenPlayer(true)}
+            title="Mode Imersif Layar Penuh"
+            className="p-1.5 text-zinc-400 hover:text-white"
+          >
+            <Maximize2 className="w-4 h-4" />
+          </button>
+        </div>
+      </footer>
+
+      {/* ==================== MOBILE NATIVE BOTTOM TAB BAR ==================== */}
+      <nav className="flex lg:hidden items-center justify-around bg-zinc-950/95 backdrop-blur-xl border-t border-white/[0.06] py-2 shrink-0 z-30">
+        {[
+          { id: 'discover', label: 'Beranda', icon: Disc3, action: () => setActiveView('discover') },
+          { id: 'liked', label: 'Disukai', icon: Heart, action: () => setActiveView('liked') },
+          { id: 'offline', label: 'Offline FLAC', icon: Download, action: () => setActiveView('offline') },
+          { id: 'wrapped', label: 'Wrapped', icon: Activity, action: () => setActiveView('wrapped') },
+          { id: 'player', label: 'Lirik & EQ', icon: Sliders, action: () => setIsFullscreenPlayer(true) }
+        ].map((item) => {
+          const Icon = item.icon;
+          const active = activeView === item.id;
+          return (
+            <button
+              key={item.id}
+              onClick={item.action}
+              className={`flex flex-col items-center gap-0.5 text-[10px] font-semibold ${
+                active ? 'text-white' : 'text-zinc-500'
+              }`}
+            >
+              <Icon className="w-4 h-4" />
+              <span>{item.label}</span>
+            </button>
+          );
+        })}
+      </nav>
+
+      {/* ==================== IMMERSIVE FULLSCREEN NOW PLAYING (APPLE MUSIC / SPOTIFY PRO STYLE) ==================== */}
+      {isFullscreenPlayer && currentTrack && (
+        <div className="fixed inset-0 z-50 bg-zinc-950 flex flex-col overflow-hidden">
+          {/* Dynamic Blurred Album Cover Backdrop */}
+          <img
+            src={currentTrack.cover}
+            alt=""
+            className="absolute inset-0 w-full h-full object-cover scale-150 blur-3xl opacity-35 pointer-events-none"
+          />
+          <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-black/65 to-black/90 pointer-events-none" />
+
+          {/* Top Bar */}
+          <div className="relative z-10 flex items-center justify-between px-6 py-4">
+            <button
+              onClick={() => setIsFullscreenPlayer(false)}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/10 hover:bg-white/15 text-xs font-semibold backdrop-blur-md"
+            >
+              <Minimize2 className="w-3.5 h-3.5" />
+              <span>Tutup</span>
+            </button>
+            <div className="flex items-center gap-2">
+              <span className="px-2.5 py-1 rounded-full bg-amber-400/15 border border-amber-400/30 text-amber-300 text-[11px] font-mono font-bold">
+                24-BIT / 96KHZ LOSSLESS
+              </span>
+              <span className="px-2.5 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-[11px] font-semibold">
+                ✓ Wrapped Synced
+              </span>
+            </div>
+          </div>
+
+          {/* Main Split: Artwork + Controls on Left, Live Karaoke Lyrics on Right */}
+          <div className="relative z-10 flex-1 grid grid-cols-1 lg:grid-cols-2 gap-8 items-center px-6 sm:px-14 pb-8 overflow-y-auto">
+            <div className="flex flex-col items-center lg:items-start max-w-md mx-auto w-full space-y-6">
+              <img
+                src={currentTrack.cover}
+                alt={currentTrack.title}
+                className="w-64 h-64 sm:w-80 sm:h-80 rounded-3xl object-cover shadow-[0_25px_70px_rgba(0,0,0,0.75)] border border-white/10"
+              />
+
+              <div className="w-full flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <h2 className="text-xl sm:text-2xl font-extrabold text-white truncate">
+                    {currentTrack.title}
+                  </h2>
+                  <p className="text-sm sm:text-base text-zinc-300 truncate">{currentTrack.artist}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => toggleLike(currentTrack)}
+                    className={`p-2.5 rounded-full bg-white/10 ${
+                      isLiked(currentTrack.id) ? 'text-[#1DB954]' : 'text-white'
+                    }`}
+                  >
+                    <Heart className={`w-5 h-5 ${isLiked(currentTrack.id) ? 'fill-current' : ''}`} />
+                  </button>
+                  <button
+                    onClick={() => handleDownloadOffline(currentTrack, true)}
+                    className="p-2.5 rounded-full bg-white/10 text-amber-300"
+                    title="Download 24-Bit FLAC"
+                  >
+                    <Download className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Fullscreen Scrubber */}
+              <div className="w-full space-y-1.5">
+                <div
+                  onClick={(e) => {
+                    if (!audioRef.current) return;
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+                    audioRef.current.currentTime = ratio * (duration || 1);
+                  }}
+                  className="w-full h-1.5 bg-white/20 rounded-full cursor-pointer overflow-hidden"
+                >
+                  <div
+                    style={{ width: `${Math.min(100, (progress / (duration || 1)) * 100)}%` }}
+                    className="h-full bg-white rounded-full"
+                  />
+                </div>
+                <div className="flex justify-between text-xs font-mono text-zinc-400">
+                  <span>{formatTime(progress)}</span>
+                  <span>{formatTime(duration)}</span>
+                </div>
+              </div>
+
+              {/* Fullscreen Transport */}
+              <div className="w-full flex items-center justify-center gap-8">
+                <button onClick={playPrev} className="text-white/80 hover:text-white">
+                  <SkipBack className="w-7 h-7 fill-current" />
+                </button>
+                <button
+                  onClick={togglePlayPause}
+                  className="w-16 h-16 rounded-full bg-white text-black flex items-center justify-center shadow-2xl hover:scale-105 transition-transform"
+                >
+                  {isBuffering ? (
+                    <Loader2 className="w-7 h-7 animate-spin" />
+                  ) : isPlaying ? (
+                    <Pause className="w-7 h-7 fill-current" />
+                  ) : (
+                    <Play className="w-7 h-7 fill-current ml-1" />
+                  )}
+                </button>
+                <button onClick={playNext} className="text-white/80 hover:text-white">
+                  <SkipForward className="w-7 h-7 fill-current" />
+                </button>
+              </div>
+            </div>
+
+            {/* Right Column: Live Karaoke Lyrics */}
+            <div className="h-[340px] lg:h-[460px] overflow-y-auto pr-2 space-y-4">
+              {lyricsData.found ? (
+                lyricsData.lines.map((line, i) => {
+                  const isActive = i === activeLyricIndex;
+                  return (
+                    <p
+                      key={i}
+                      ref={isActive ? activeLyricRef : null}
+                      onClick={() => {
+                        if (audioRef.current) audioRef.current.currentTime = line.time;
+                      }}
+                      className={`cursor-pointer transition-all duration-300 ${
+                        isActive
+                          ? 'text-2xl sm:text-3xl font-extrabold text-white'
+                          : 'text-lg sm:text-xl font-bold text-white/30 hover:text-white/60'
+                      }`}
+                    >
+                      {line.text}
+                    </p>
+                  );
+                })
+              ) : (
+                <div className="h-full flex flex-col items-center justify-center text-white/40 space-y-2">
+                  <LosslessIcon className="w-10 h-10 text-amber-300/70" />
+                  <p className="text-sm font-semibold">24-Bit / 96kHz Hi-Res Audio Stream</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== INSTALL NATIVE APP MODAL ==================== */}
+      {showInstallModal && (
+        <div
+          onClick={() => setShowInstallModal(false)}
+          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-md flex items-center justify-center p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md rounded-3xl bg-[#18181b] border border-white/10 p-6 space-y-4 shadow-2xl"
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <img src="/icon.svg" alt="AURA" className="w-9 h-9 rounded-xl" />
+                <div>
+                  <h3 className="font-extrabold text-base text-white">Install AURA Music</h3>
+                  <p className="text-xs text-zinc-400">Android • iOS • Windows Native App</p>
+                </div>
+              </div>
+              <button onClick={() => setShowInstallModal(false)} className="text-zinc-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs text-zinc-300">
+              {!isNativeApk() && (
+                <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <p className="font-bold text-emerald-400">File Android APK Resmi (Siap Install)</p>
+                    <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono text-[10px] font-bold">
+                      ANDROID 8.0+
+                    </span>
+                  </div>
+                  <p className="text-zinc-400 leading-relaxed">
+                    Unduh langsung file <code>AuraMusic-Studio.apk</code> ke HP Android kamu atau kirim lewat WhatsApp / kabel USB.
+                  </p>
+                  <a
+                    href="/AuraMusic-Studio.apk"
+                    download="AuraMusic-Studio.apk"
+                    className="w-full py-2.5 rounded-xl bg-[#1DB954] hover:bg-emerald-400 text-black font-extrabold text-xs flex items-center justify-center gap-2 transition-colors shadow-lg"
+                  >
+                    <Download className="w-4 h-4 stroke-[2.5]" />
+                    <span>Download AuraMusic-Studio.apk</span>
+                  </a>
+                </div>
+              )}
+
+              <div className="p-3.5 rounded-2xl bg-black/50 border border-white/[0.06] space-y-2">
+                <p className="font-bold text-amber-300">Koneksi Hi-Res Studio Server (Full-Track & FFmpeg FLAC)</p>
+                <p className="text-zinc-400 leading-relaxed">
+                  Saat satu Wi-Fi/Hotspot dengan laptop, masukkan IP Server untuk konversi 24-Bit FLAC penuh. Saat di luar rumah (4G/5G), APK otomatis beralih ke Standalone Cloud & Offline FLAC!
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={serverUrlInput}
+                    onChange={(e) => setServerUrlInput(e.target.value)}
+                    placeholder="http://10.150.197.246:3001"
+                    className="flex-1 px-3 py-1.5 rounded-xl bg-zinc-900 border border-white/10 text-xs text-white font-mono focus:outline-none focus:border-amber-400"
+                  />
+                  <button
+                    onClick={() => {
+                      setStudioServerUrl(serverUrlInput);
+                      fetchTracks(searchQuery || 'Tulus Mahalini', sourceMode);
+                      setShowInstallModal(false);
+                    }}
+                    className="px-3.5 py-1.5 rounded-xl bg-amber-400 text-black font-bold text-xs"
+                  >
+                    Simpan
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setShowInstallModal(false)}
+              className="w-full py-2.5 rounded-full bg-white text-black font-bold text-xs hover:bg-zinc-200 transition-colors"
+            >
+              Mengerti
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 5-bar AURA Lossless Waveform Icon -->
+    <path
+        android:fillColor="#1DB954"
+        android:pathData="M34,46 C35.6,46 37,47.4 37,49 L37,59 C37,60.6 35.6,62 34,62 C32.4,62 31,60.6 31,59 L31,49 C31,47.4 32.4,46 34,46 Z" />
+    <path
+        android:fillColor="#1DB954"
+        android:pathData="M44,37 C45.6,37 47,38.4 47,40 L47,68 C47,69.6 45.6,71 44,71 C42.4,71 41,69.6 41,68 L41,40 C41,38.4 42.4,37 44,37 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,30 C55.6,30 57,31.4 57,33 L57,75 C57,76.6 55.6,78 54,78 C52.4,78 51,76.6 51,75 L51,33 C51,31.4 52.4,30 54,30 Z" />
+    <path
+        android:fillColor="#10B981"
+        android:pathData="M64,39 C65.6,39 67,40.4 67,42 L67,66 C67,67.6 65.6,69 64,69 C62.4,69 61,67.6 61,66 L61,42 C61,40.4 62.4,39 64,39 Z" />
+    <path
+        android:fillColor="#F59E0B"
+        android:pathData="M74,47 C75.6,47 77,48.4 77,50 L77,58 C77,59.6 75.6,61 74,61 C72.4,61 71,59.6 71,58 L71,50 C71,48.4 72.4,47 74,47 Z" />
+</vector>

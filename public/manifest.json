@@ -1,0 +1,19 @@
+{
+  "name": "AURA Music Studio",
+  "short_name": "AURA",
+  "description": "Spotify & YouTube Music Lossless 24-Bit Player with Wrapped Sync Bridge",
+  "start_url": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

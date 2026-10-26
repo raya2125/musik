@@ -13,7 +13,8 @@ import {
   normalizeText,
   extractCanonicalSong,
   verifySongLyricsOnLrclib,
-  computeTrackRelevance
+  computeTrackRelevance,
+  parseViewCount
 } from './smartSearch.js';
 
 const execFileAsync = promisify(execFile);
@@ -378,7 +379,8 @@ async function searchYouTubeMusic(query) {
             artist: (v.ownerText?.runs?.[0]?.text || 'YouTube Artist').replace(/ - Topic$/i, ''),
             thumbnail: v.thumbnail?.thumbnails?.[v.thumbnail.thumbnails.length - 1]?.url || '',
             duration: seconds,
-            views: v.shortViewCountText?.simpleText || ''
+            views: v.shortViewCountText?.simpleText || '',
+            numericViews: parseViewCount(v.shortViewCountText?.simpleText || '')
           });
         }
       }
@@ -581,6 +583,9 @@ app.get('/api/search', async (req, res) => {
           bitrate: '1411 kbps',
           source: 'Spotify Official Catalog + 24-Bit Lossless'
         },
+        popularity: t.popularity || 65,
+        numericViews: (t.popularity || 65) * 1200000,
+        views: `${((t.popularity || 65) * 1.2).toFixed(0)}M streams`,
         sourceMode: mode
       };
     };
@@ -636,6 +641,9 @@ app.get('/api/search', async (req, res) => {
           bitrate: '1411 kbps',
           source: 'Spotify ISRC + Full-Length Hi-Res Master'
         },
+        popularity: 75,
+        numericViews: 25000000,
+        views: '25M streams',
         sourceMode: mode
       };
     };
@@ -714,7 +722,8 @@ app.get('/api/search', async (req, res) => {
             source: 'YT Music Full Stream -> 24-Bit FLAC DSP'
           },
           sourceMode: 'ytmusic',
-          views: video.views
+          views: video.views || '',
+          numericViews: video.numericViews || parseViewCount(video.views || '')
         });
       }
     }
@@ -768,6 +777,90 @@ app.get('/api/search', async (req, res) => {
     });
   } catch (err) {
     console.error('Smart search error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/recommendations
+ * Smart Infinite Auto-Play / Radio Engine
+ * Parameters:
+ *   artist: Current playing artist
+ *   title: Current playing track title
+ *   mode: 'spotify' | 'ytmusic'
+ * Returns high-view, related, non-chaotic songs to continuously expand the queue!
+ */
+app.get('/api/recommendations', async (req, res) => {
+  try {
+    const artist = (req.query.artist || 'Tulus').trim();
+    const title = (req.query.title || '').trim();
+    const mode = req.query.mode || 'spotify';
+
+    const clusters = {
+      indoPop: [
+        'Tulus', 'Mahalini', 'Bernadya', 'Hindia', 'Nadin Amizah',
+        'Tiara Andini', 'Sal Priadi', 'Yura Yunita', 'Juicy Luicy',
+        'Feby Putri', 'Pamungkas', 'Anggi Marito', 'Fabio Asher',
+        'Rizky Febian', 'Budi Doremi', 'Idgitaf'
+      ],
+      remix: [
+        'Febri remix', 'DJ Opus', 'DJ Desa', 'DJ Komang', 'DJ BonBon',
+        'Alok', 'Alan Walker', 'Marshmello', 'DJ TikTok Viral'
+      ],
+      westPop: [
+        'The Weeknd', 'Joji', 'Daniel Caesar', 'SZA', 'Frank Ocean',
+        'Bruno Mars', 'Keshi', 'Lauv', 'Jeremy Zucker', 'Post Malone',
+        'Billie Eilish'
+      ],
+      indoRock: [
+        'Sheila On 7', 'Dewa 19', 'Peterpan', 'Noah', 'Padi',
+        'Ungu', 'Fourtwnty', 'Payung Teduh'
+      ]
+    };
+
+    const artistLower = artist.toLowerCase();
+    let cluster = clusters.indoPop;
+    if (
+      artistLower.includes('remix') ||
+      artistLower.includes('dj') ||
+      artistLower.includes('bass') ||
+      artistLower.includes('febri')
+    ) {
+      cluster = clusters.remix;
+    } else if (clusters.westPop.some((a) => artistLower.includes(a.toLowerCase()))) {
+      cluster = clusters.westPop;
+    } else if (clusters.indoRock.some((a) => artistLower.includes(a.toLowerCase()))) {
+      cluster = clusters.indoRock;
+    }
+
+    // Pick 2 target related artists that are distinct from current
+    const distinct = cluster.filter((a) => !artistLower.includes(a.toLowerCase()));
+    const shuffled = [...distinct].sort(() => 0.5 - Math.random());
+    const selected = shuffled.slice(0, 2);
+    const recSearchQuery = `${selected.join(' ')} popular hits`;
+
+    // Internal fetch to our search endpoint
+    const internalUrl = `http://127.0.0.1:${PORT}/api/search?q=${encodeURIComponent(recSearchQuery)}&mode=${mode}`;
+    const searchRes = await fetch(internalUrl);
+    const data = await searchRes.json();
+
+    // Clean and filter out current song
+    const cleanResults = (data.results || []).filter((t) => {
+      if (!t || !t.title) return false;
+      if (title && t.title.toLowerCase().includes(title.toLowerCase().slice(0, 7))) return false;
+      return true;
+    });
+
+    res.json({
+      success: true,
+      seedArtist: artist,
+      seedTitle: title,
+      clusterFound: selected,
+      count: cleanResults.length,
+      results: cleanResults.slice(0, 14)
+    });
+  } catch (err) {
+    console.error('Recommendations error:', err);
     res.status(500).json({ error: err.message });
   }
 });

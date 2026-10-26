@@ -280,3 +280,34 @@ export async function apiGetSpotifyPlaylistTracks(playlistId) {
     }))
   };
 }
+
+/**
+ * Smart Infinite Auto-Play / Radio Recommendations
+ */
+export async function apiGetRecommendations(artist, title, mode = 'spotify') {
+  const base = getStudioServerUrl();
+  try {
+    const res = await fetchWithTimeout(
+      `${base}/api/recommendations?artist=${encodeURIComponent(artist || '')}&title=${encodeURIComponent(
+        title || ''
+      )}&mode=${mode}`,
+      {},
+      base ? 4500 : 8000
+    );
+    if (res.ok) {
+      const data = await res.json();
+      if (data.results?.length) {
+        return {
+          ...data,
+          results: data.results.map((t) => ({
+            ...t,
+            audioUrl: resolveStreamUrl(t.audioUrl, base)
+          }))
+        };
+      }
+    }
+  } catch {}
+
+  // Fallback direct cloud
+  return apiSearchTracks(`${artist || 'Tulus'} popular hits`, mode);
+}

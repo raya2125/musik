@@ -230,33 +230,113 @@ export async function verifySongLyricsOnLrclib(canonicalQuery, userQuery) {
 }
 
 /**
- * Computes relevance score of a track against user's raw query
+ * Parses numeric view count from strings like "50M views", "1.2M", "340K", "10M views"
+ */
+export function parseViewCount(viewStr) {
+  if (!viewStr) return 0;
+  if (typeof viewStr === 'number') return viewStr;
+  const str = String(viewStr).toLowerCase().replace(/,/g, '').trim();
+  const num = parseFloat(str.replace(/[^0-9.]/g, ''));
+  if (isNaN(num)) return 0;
+  if (str.includes('b') || str.includes('miliar')) return Math.round(num * 1000000000);
+  if (str.includes('m') || str.includes('jt') || str.includes('juta') || str.includes('million')) return Math.round(num * 1000000);
+  if (str.includes('k') || str.includes('rb') || str.includes('ribu') || str.includes('thousand')) return Math.round(num * 1000);
+  return Math.round(num);
+}
+
+/**
+ * Computes relevance & popularity score of a track against user's raw query.
+ * Prioritizes:
+ * 1. Exact/Substring Title & Artist Name Match
+ * 2. High View Count & Stream Popularity (Official > Fan covers)
+ * 3. Verified Lyric Match
+ * 4. Official Audio / Video signal over noise/reaction/karaoke
  */
 export function computeTrackRelevance(track, rawQuery) {
   let score = 0;
   const qNorm = normalizeText(rawQuery);
   const qCompact = compactText(rawQuery);
   const titleNorm = normalizeText(track.title);
+  const titleCompact = compactText(track.title);
   const artistNorm = normalizeText(track.artist);
+  const artistCompact = compactText(track.artist);
   const combinedNorm = `${artistNorm} ${titleNorm}`;
   const combinedCompact = compactText(combinedNorm);
 
-  // 1. Verified Lyric Match gets highest priority when user typed lyrics!
+  // 1. Verified Lyric Match gets high priority when user typed lyrics
   if (track.lyricMatch?.matched) {
-    score += 950 + Math.round((track.lyricMatch.score || 0.8) * 200);
+    score += 1300 + Math.round((track.lyricMatch.score || 0.8) * 300);
   } else if (track.discoveredViaLyricIndex) {
-    score += 780 + (track.lyricConsensusCount || 1) * 45;
+    score += 950 + (track.lyricConsensusCount || 1) * 60;
   }
 
-  // 2. Exact / Substring Title & Artist Matches
-  if (titleNorm === qNorm || artistNorm === qNorm) {
-    score += 1000;
+  // 2. Exact / Substring Title & Artist Matching
+  if (titleNorm === qNorm) {
+    // Exact song title match!
+    score += 1500;
+  } else if (titleNorm.startsWith(qNorm) || qNorm.startsWith(titleNorm)) {
+    score += 1250;
+  } else if (titleCompact.includes(qCompact) && qCompact.length >= 3) {
+    score += 1100;
+  } else if (artistNorm === qNorm || artistCompact === qCompact) {
+    // Exact artist search (e.g. searching "Tulus" or "Febri remix")
+    score += 1350;
   } else if (combinedCompact.includes(qCompact) && qCompact.length >= 4) {
-    score += 880;
+    // Artist + Title query match
+    score += 1050;
   } else {
     const overlap = wordOverlapScore(rawQuery, combinedNorm);
     const tri = trigramSimilarity(rawQuery, combinedNorm);
-    score += Math.round(overlap * 500 + tri * 300);
+    score += Math.round(overlap * 600 + tri * 350);
+  }
+
+  // 3. POPULARITY & VIEW COUNT BOOST (Ensures most popular version with highest views ranks top!)
+  const viewCount =
+    track.numericViews ||
+    parseViewCount(track.views) ||
+    (track.popularity ? track.popularity * 1500000 : 500000);
+
+  if (viewCount > 0) {
+    const logViews = Math.max(0, Math.log10(viewCount + 1)); // ~3 to ~9.5
+    // Add up to +700 points based on popularity/views
+    score += Math.round(logViews * 75);
+  }
+
+  // 4. Official Audio / Video & Spotify Master Boost
+  if (track.id?.startsWith('sp_') || track.losslessInfo?.source?.includes('Official')) {
+    score += 250;
+  }
+
+  const trackLower = (track.title || '').toLowerCase();
+  const qLower = rawQuery.toLowerCase();
+
+  if (
+    trackLower.includes('official audio') ||
+    trackLower.includes('official music video') ||
+    trackLower.includes('official video') ||
+    trackLower.includes('original track')
+  ) {
+    score += 200;
+  }
+
+  // 5. Noise & Low-Quality Filtering (penalize unwanted covers/parodies unless user asked)
+  if (!qLower.includes('cover') && trackLower.includes('cover')) {
+    score -= 350;
+  }
+  if (!qLower.includes('karaoke') && (trackLower.includes('karaoke') || trackLower.includes('instrumental'))) {
+    score -= 450;
+  }
+  if (!qLower.includes('parodi') && trackLower.includes('parodi')) {
+    score -= 550;
+  }
+  if (
+    trackLower.includes('reaction') ||
+    trackLower.includes('guitar lesson') ||
+    trackLower.includes('tutorial') ||
+    trackLower.includes('podcast') ||
+    trackLower.includes('ear rape')
+  ) {
+    score -= 750;
   }
 
   return score;

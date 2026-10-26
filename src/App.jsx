@@ -21,6 +21,7 @@ import {
   apiLogoutSpotify,
   apiGetSpotifyPlaylists,
   apiGetSpotifyPlaylistTracks,
+  apiGetRecommendations,
   getSpotifyLoginUrl
 } from './utils/apiBridge';
 
@@ -200,6 +201,8 @@ export default function App() {
   const [isMuted, setIsMuted] = useState(false);
   const [isShuffle, setIsShuffle] = useState(false);
   const [isRepeat, setIsRepeat] = useState(false);
+  const [isAutoRadio, setIsAutoRadio] = useState(true); // Infinite Music Flow: auto-fetch new popular hits when queue ends
+  const [isExtendingQueue, setIsExtendingQueue] = useState(false);
 
   // Lossless & EQ State
   const [isLosslessEnabled, setIsLosslessEnabled] = useState(true);
@@ -298,7 +301,7 @@ export default function App() {
   };
 
   useEffect(() => {
-    fetchTracks('Febri remix Tante Culik Aku Dong Tulus', 'spotify', 'Rekomendasi Utama');
+    fetchTracks('Mahalini Tulus Bernadya Hindia', 'spotify', 'Rekomendasi Utama Terpopuler');
     loadOfflineLibrary();
     fetchWrappedLogs();
     refreshSpotifyConnection();
@@ -534,15 +537,44 @@ export default function App() {
     }
   };
 
-  const playNext = () => {
+  const playNext = async () => {
     const activeList = activeDisplayedTracks.length ? activeDisplayedTracks : tracks;
     if (!activeList.length) return;
+
     if (isShuffle) {
-      const rand = activeList[Math.floor(Math.random() * activeList.length)];
+      const unplayed = activeList.filter((t) => t.id !== currentTrack?.id);
+      const pool = unplayed.length ? unplayed : activeList;
+      const rand = pool[Math.floor(Math.random() * pool.length)];
       playTrack(rand);
       return;
     }
+
     const idx = activeList.findIndex((t) => t.id === currentTrack?.id);
+
+    // Smart Infinite Auto-Radio: when reaching queue end, auto-extend with fresh popular related hits!
+    if (isAutoRadio && (idx === -1 || idx >= activeList.length - 1)) {
+      if (!isExtendingQueue && currentTrack) {
+        setIsExtendingQueue(true);
+        try {
+          const rec = await apiGetRecommendations(currentTrack.artist, currentTrack.title, sourceMode);
+          if (rec?.results?.length) {
+            const existingIds = new Set(activeList.map((t) => t.id));
+            const newTracks = rec.results.filter((t) => !existingIds.has(t.id));
+            if (newTracks.length > 0) {
+              setTracks((prev) => [...prev, ...newTracks]);
+              setIsExtendingQueue(false);
+              playTrack(newTracks[0]);
+              return;
+            }
+          }
+        } catch (e) {
+          console.error('Auto radio queue extension error:', e);
+        } finally {
+          setIsExtendingQueue(false);
+        }
+      }
+    }
+
     const nextIdx = idx >= 0 && idx + 1 < activeList.length ? idx + 1 : 0;
     playTrack(activeList[nextIdx]);
   };
@@ -2155,7 +2187,24 @@ export default function App() {
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-bold text-zinc-300">Berikutnya di Antrean</span>
+                      <button
+                        onClick={() => setIsAutoRadio(!isAutoRadio)}
+                        title="Otomatis merekomendasikan lagu baru saat antrean habis"
+                        className={`text-[10px] font-mono px-2 py-0.5 rounded-full border transition-all ${
+                          isAutoRadio
+                            ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300 font-bold'
+                            : 'border-zinc-700 text-zinc-500'
+                        }`}
+                      >
+                        {isAutoRadio ? '📻 Auto-Radio ON' : 'Radio OFF'}
+                      </button>
                     </div>
+                    {isExtendingQueue && (
+                      <div className="flex items-center gap-2 p-2 rounded-lg bg-emerald-500/10 text-emerald-300 text-xs font-mono">
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>Mencari rekomendasi lagu populer baru...</span>
+                      </div>
+                    )}
                     {activeDisplayedTracks
                       .slice(
                         Math.max(0, activeDisplayedTracks.findIndex((t) => t.id === currentTrack.id) + 1),

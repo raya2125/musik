@@ -4,7 +4,8 @@ import {
   Sliders, Smartphone, Activity, Volume2, VolumeX, Trash2,
   Heart, Shuffle, Repeat, Mic2, ListMusic, Maximize2, Minimize2,
   ChevronLeft, Library, Sparkles, WifiOff, Disc3, Loader2, X,
-  CheckCircle2, Radio, ShieldCheck, ArrowDownToLine, Info
+  CheckCircle2, Radio, ShieldCheck, ArrowDownToLine, Info,
+  ArrowLeft, User, Plus, Folder, Flame, Tv, Bell
 } from 'lucide-react';
 import { dspEngine } from './utils/losslessAudioEngine';
 import { saveTrackOffline, getAllOfflineTracks, deleteOfflineTrack } from './utils/offlineStorage';
@@ -106,9 +107,69 @@ function formatTime(secs) {
 }
 
 export default function App() {
+  // Theme State: 'pixel' (Spotify-TUI Retro Terminal) vs 'studio' (Modern Glassmorphism)
+  const [uiTheme, setUiTheme] = useState(() => localStorage.getItem('aura_ui_theme') || 'pixel');
+  const [pixelCategory, setPixelCategory] = useState('all'); // 'all' | 'music' | 'podcasts'
+
+  // Creator & Artist State
+  const [activeArtist, setActiveArtist] = useState(null);
+  const [followedArtists, setFollowedArtists] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('aura_followed_artists') || '["Febri remix", "Tulus", "Mahalini"]');
+    } catch {
+      return ["Febri remix", "Tulus", "Mahalini"];
+    }
+  });
+
+  const toggleFollowArtist = (artistName) => {
+    if (!artistName) return;
+    setFollowedArtists((prev) => {
+      const next = prev.includes(artistName)
+        ? prev.filter((a) => a !== artistName)
+        : [...prev, artistName];
+      localStorage.setItem('aura_followed_artists', JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const isFollowed = (artistName) => followedArtists.includes(artistName);
+
+  const openArtistView = (artistName) => {
+    if (!artistName) return;
+    const clean = artistName.split('&')[0].split(',')[0].split('feat')[0].trim();
+    const target = clean || artistName.trim();
+    setActiveArtist(target);
+    setActiveView('artist');
+    fetchTracks(target, sourceMode, `Koleksi Artis: ${target}`, true);
+  };
+
+  const getArtistDetails = (name) => {
+    const artistName = name || 'Artis';
+    let hash = 0;
+    for (let i = 0; i < artistName.length; i++) {
+      hash = (hash << 5) - hash + artistName.charCodeAt(i);
+      hash |= 0;
+    }
+    const listeners = Math.abs(hash % 3800000) + 1200000;
+    const rank = (Math.abs(hash) % 45) + 1;
+    return {
+      name: artistName,
+      listeners: listeners.toLocaleString('id-ID'),
+      rank,
+      bio: `${artistName} adalah salah satu kreator & produser musik paling aktif di Spotify dan YouTube Music. Dikenal dengan karya aransemen berkarakter dan audio mastering 24-Bit Hi-Res lossless.`,
+      genres: ['Indie Pop', 'Lossless Master', 'Acoustic / Remix', 'Pop Nusantara'],
+      cities: [
+        { city: 'Jakarta, ID', count: `${Math.round(listeners * 0.35).toLocaleString('id-ID')} pendengar` },
+        { city: 'Surabaya, ID', count: `${Math.round(listeners * 0.22).toLocaleString('id-ID')} pendengar` },
+        { city: 'Bandung, ID', count: `${Math.round(listeners * 0.18).toLocaleString('id-ID')} pendengar` },
+        { city: 'Medan, ID', count: `${Math.round(listeners * 0.12).toLocaleString('id-ID')} pendengar` }
+      ]
+    };
+  };
+
   // Core Engine State
   const [sourceMode, setSourceMode] = useState('spotify'); // 'spotify' | 'ytmusic'
-  const [activeView, setActiveView] = useState('discover'); // 'discover' | 'liked' | 'offline' | 'wrapped'
+  const [activeView, setActiveView] = useState('discover'); // 'discover' | 'liked' | 'offline' | 'wrapped' | 'artist'
   const [rightTab, setRightTab] = useState('playing'); // 'playing' | 'lyrics' | 'eq'
   const [showRightPanel, setShowRightPanel] = useState(true);
   const [isFullscreenPlayer, setIsFullscreenPlayer] = useState(false);
@@ -122,11 +183,19 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
 
   // Playback State
-  const [currentTrack, setCurrentTrack] = useState(null);
+  const [currentTrack, setCurrentTrack] = useState({
+    id: 'track_febri_tante',
+    title: 'Tante Culik Aku Dong (Remix)',
+    artist: 'Febri remix',
+    album: 'Tante Culik Aku Dong Remix - Single',
+    duration: 335,
+    cover: '/febri-dove.png',
+    audioUrl: 'https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3?filename=electronic-future-beats-117997.mp3'
+  });
   const [isPlaying, setIsPlaying] = useState(false);
   const [isBuffering, setIsBuffering] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [duration, setDuration] = useState(215);
+  const [progress, setProgress] = useState(36);
+  const [duration, setDuration] = useState(335);
   const [volume, setVolume] = useState(0.9);
   const [isMuted, setIsMuted] = useState(false);
   const [isShuffle, setIsShuffle] = useState(false);
@@ -229,7 +298,7 @@ export default function App() {
   };
 
   useEffect(() => {
-    fetchTracks('Tulus Mahalini', 'spotify', 'Pilihan Editor Hi-Res');
+    fetchTracks('Febri remix Tante Culik Aku Dong Tulus', 'spotify', 'Rekomendasi Utama');
     loadOfflineLibrary();
     fetchWrappedLogs();
     refreshSpotifyConnection();
@@ -321,9 +390,11 @@ export default function App() {
     return () => cancelAnimationFrame(animFrameRef.current);
   }, [isPlaying, isBuffering]);
 
-  const fetchTracks = async (query, mode = sourceMode, customHeading = null) => {
+  const fetchTracks = async (query, mode = sourceMode, customHeading = null, preserveView = false) => {
     setIsLoading(true);
-    setActiveView('discover');
+    if (!preserveView) {
+      setActiveView('discover');
+    }
     if (customHeading) setActiveFeedTitle(customHeading);
     else setActiveFeedTitle(`Hasil untuk "${query}"`);
 
@@ -563,16 +634,26 @@ export default function App() {
   const accentBar = sourceMode === 'spotify' ? 'bg-[#1DB954]' : 'bg-[#FF0033]';
 
   const ambientGradient = useMemo(() => {
+    if (uiTheme === 'pixel') {
+      return 'from-[#222436]/90 via-[#1e2030] to-[#1e2030]';
+    }
     if (activeView === 'liked') return 'from-indigo-900/55 via-[#121214] to-[#121214]';
     if (activeView === 'offline') return 'from-amber-900/40 via-[#121214] to-[#121214]';
     if (activeView === 'wrapped') return 'from-emerald-900/50 via-[#121214] to-[#121214]';
+    if (activeView === 'artist') return 'from-emerald-950/70 via-[#121214] to-[#121214]';
     return sourceMode === 'spotify'
       ? 'from-emerald-950/65 via-[#121214] to-[#121214]'
       : 'from-rose-950/65 via-[#121214] to-[#121214]';
-  }, [activeView, sourceMode]);
+  }, [activeView, sourceMode, uiTheme]);
 
   return (
-    <div className="flex flex-col h-screen w-screen bg-black text-zinc-100 select-none overflow-hidden p-0 sm:p-2 sm:gap-2">
+    <div
+      className={`flex flex-col h-screen w-screen ${
+        uiTheme === 'pixel'
+          ? 'bg-[#161822] text-[#c0caf5] font-mono selection:bg-[#73daca] selection:text-black'
+          : 'bg-black text-zinc-100 font-sans selection:bg-emerald-500 selection:text-black'
+      } select-none overflow-hidden p-0 sm:p-2 sm:gap-2`}
+    >
       {/* Core HTML5 Audio Element */}
       <audio
         ref={audioRef}
@@ -608,20 +689,45 @@ export default function App() {
       )}
 
       {/* ==================== TOP NATIVE APPLICATION BAR ==================== */}
-      <header className="h-12 px-3 sm:px-2 flex items-center justify-between gap-3 shrink-0 bg-black z-20">
+      <header
+        className={`h-12 px-3 sm:px-3 flex items-center justify-between gap-3 shrink-0 z-20 transition-colors ${
+          uiTheme === 'pixel'
+            ? 'bg-[#1a1c29] border-b border-[#2f334d] font-mono'
+            : 'bg-black border-b border-white/[0.04]'
+        }`}
+      >
         {/* Left Brand & Home */}
         <div className="flex items-center gap-2.5">
+          {uiTheme === 'pixel' && (
+            <span className="hidden sm:inline text-xs font-mono text-[#565f89] font-bold mr-1">...</span>
+          )}
           <button
             onClick={() => setActiveView('discover')}
             className="flex items-center gap-2 group focus:outline-none"
           >
-            <div className="w-8 h-8 rounded-xl bg-zinc-900 border border-white/10 flex items-center justify-center shadow-inner">
+            <div
+              className={`w-8 h-8 rounded-xl flex items-center justify-center shadow-inner ${
+                uiTheme === 'pixel'
+                  ? 'bg-[#24283b] border border-[#3b4261]'
+                  : 'bg-zinc-900 border border-white/10'
+              }`}
+            >
               <img src="/icon.svg" alt="AURA" className="w-6 h-6" />
             </div>
             <div className="hidden sm:flex items-baseline gap-1.5">
-              <span className="font-extrabold tracking-tight text-[15px] text-white">AURA</span>
-              <span className="text-[9px] font-mono font-semibold tracking-widest text-zinc-500 uppercase">
-                STUDIO
+              <span
+                className={`font-extrabold tracking-tight text-[15px] ${
+                  uiTheme === 'pixel' ? 'text-[#73daca] font-mono' : 'text-white'
+                }`}
+              >
+                AURA
+              </span>
+              <span
+                className={`text-[9px] font-mono font-semibold tracking-widest uppercase ${
+                  uiTheme === 'pixel' ? 'text-[#7aa2f7]' : 'text-zinc-500'
+                }`}
+              >
+                {uiTheme === 'pixel' ? 'TUI-PIXEL' : 'STUDIO'}
               </span>
             </div>
           </button>
@@ -629,12 +735,34 @@ export default function App() {
 
         {/* Center Search Pill + Segmented Source Engine Switcher */}
         <div className="flex items-center gap-2 flex-1 max-w-2xl justify-center">
+          {uiTheme === 'pixel' && (
+            <div className="hidden sm:flex items-center gap-1.5 text-[#7aa2f7] font-mono text-xs font-bold mr-1">
+              <button
+                onClick={() => setActiveView('discover')}
+                className="hover:text-white px-1.5 py-0.5 rounded bg-[#24283b] border border-[#3b4261]"
+                title="Kembali"
+              >
+                &lt;
+              </button>
+              <button
+                className="text-zinc-600 px-1.5 py-0.5 rounded bg-[#24283b]/50 border border-[#3b4261]/40 cursor-not-allowed"
+                title="Maju"
+              >
+                &gt;
+              </button>
+            </div>
+          )}
+
           <form
             onSubmit={(e) => {
               e.preventDefault();
               if (searchQuery.trim()) fetchTracks(searchQuery.trim(), sourceMode);
             }}
-            className="flex-1 max-w-md flex items-center bg-[#18181b] hover:bg-[#202024] focus-within:bg-[#202024] focus-within:ring-1 focus-within:ring-white/20 rounded-full px-3.5 h-9 transition-all border border-white/[0.04]"
+            className={`flex-1 max-w-md flex items-center rounded-full px-3.5 h-9 transition-all border ${
+              uiTheme === 'pixel'
+                ? 'bg-[#24283b] border-[#3b4261] focus-within:border-[#73daca] text-[#c0caf5]'
+                : 'bg-[#18181b] hover:bg-[#202024] focus-within:bg-[#202024] focus-within:ring-1 focus-within:ring-white/20 border-white/[0.04]'
+            }`}
           >
             <Search className="w-4 h-4 text-zinc-400 mr-2.5 shrink-0" />
             <input
@@ -643,10 +771,12 @@ export default function App() {
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder={
                 sourceMode === 'spotify'
-                  ? 'Cari lagu, artis, atau ketik potongan lirik...'
+                  ? 'Cari lagu, creator, atau ketik potongan lirik...'
                   : 'Cari lirik lagu, live session, atau remix di YT Music...'
               }
-              className="bg-transparent w-full text-[13px] text-white placeholder-zinc-500 focus:outline-none"
+              className={`bg-transparent w-full text-[13px] placeholder-zinc-500 focus:outline-none ${
+                uiTheme === 'pixel' ? 'text-[#c0caf5] font-mono' : 'text-white'
+              }`}
             />
             {searchQuery && (
               <button
@@ -660,7 +790,13 @@ export default function App() {
           </form>
 
           {/* Dual Engine Pill Switcher: Spotify Mode <-> YT Music Mode */}
-          <div className="flex items-center bg-[#18181b] p-0.5 rounded-full border border-white/[0.06] shrink-0">
+          <div
+            className={`flex items-center p-0.5 rounded-full border shrink-0 ${
+              uiTheme === 'pixel'
+                ? 'bg-[#24283b] border-[#3b4261]'
+                : 'bg-[#18181b] border-white/[0.06]'
+            }`}
+          >
             <button
               onClick={() => handleSwitchMode('spotify')}
               className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-all ${
@@ -686,8 +822,25 @@ export default function App() {
           </div>
         </div>
 
-        {/* Right Studio Badges: Lossless Signal, Wrapped Sync & Install App */}
+        {/* Right Studio Badges: Theme Toggle, Lossless Signal, Wrapped Sync & Install App */}
         <div className="flex items-center gap-1.5">
+          {/* UI Theme Toggle Button: Pixel TUI <-> Studio Pro */}
+          <button
+            onClick={() => {
+              const nextTheme = uiTheme === 'pixel' ? 'studio' : 'pixel';
+              setUiTheme(nextTheme);
+              localStorage.setItem('aura_ui_theme', nextTheme);
+            }}
+            title="Ganti Tema UI (Pixelated TUI / Studio Pro)"
+            className={`flex items-center gap-1.5 px-2.5 h-8 rounded-full border text-[11px] font-mono font-bold transition-all ${
+              uiTheme === 'pixel'
+                ? 'bg-[#73daca]/20 border-[#73daca]/60 text-[#73daca] shadow-[0_0_10px_rgba(115,218,202,0.35)]'
+                : 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:text-white'
+            }`}
+          >
+            <span>{uiTheme === 'pixel' ? '👾 Pixel TUI' : '💎 Studio Pro'}</span>
+          </button>
+
           {/* Lossless 24-Bit Master Badge */}
           <button
             onClick={() => {
@@ -712,6 +865,8 @@ export default function App() {
             className={`flex items-center gap-1.5 px-2.5 h-8 rounded-full border text-[11px] font-semibold transition-all ${
               spotifyAccount.connected
                 ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                : uiTheme === 'pixel'
+                ? 'bg-[#24283b] hover:bg-[#2d3149] border-[#3b4261] text-[#c0caf5]'
                 : 'bg-[#18181b] hover:bg-[#222226] border-white/[0.08] text-zinc-200'
             }`}
           >
@@ -738,6 +893,14 @@ export default function App() {
             <ArrowDownToLine className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Aplikasi HP</span>
           </button>
+
+          {uiTheme === 'pixel' && (
+            <div className="hidden xl:flex items-center gap-2 text-xs font-mono text-[#565f89] pl-1 select-none">
+              <span className="hover:text-white cursor-pointer">—</span>
+              <span className="hover:text-white cursor-pointer">□</span>
+              <span className="hover:text-rose-400 cursor-pointer">✕</span>
+            </div>
+          )}
         </div>
       </header>
 
@@ -889,91 +1052,485 @@ export default function App() {
         </aside>
 
         {/* ---------- CENTER ISLAND: MAIN STAGE ---------- */}
-        <main className="flex-1 bg-[#121214] sm:rounded-2xl sm:border sm:border-white/[0.05] overflow-y-auto relative pb-28 sm:pb-6">
+        <main
+          className={`flex-1 sm:rounded-2xl border overflow-y-auto relative pb-28 sm:pb-6 transition-colors ${
+            uiTheme === 'pixel'
+              ? 'bg-[#1e2030] border-[#2f334d]'
+              : 'bg-[#121214] border-white/[0.05]'
+          }`}
+        >
           {/* Ambient Top Wash */}
-          <div className={`bg-gradient-to-b ${ambientGradient} px-5 sm:px-7 pt-5 pb-6`}>
+          <div className={`bg-gradient-to-b ${ambientGradient} px-4 sm:px-7 pt-4 pb-6`}>
             {/* === VIEW 1: DISCOVER / HOME / SEARCH === */}
             {activeView === 'discover' && (
-              <div className="space-y-6">
-                {/* Greeting + Mode Pill */}
-                <div className="flex items-center justify-between">
-                  <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight text-white">
-                    {greeting}
-                  </h1>
-                  <div className="flex items-center gap-1.5 text-xs text-zinc-400">
-                    {sourceMode === 'spotify' ? (
-                      <>
-                        <SpotifyIcon className="w-4 h-4 text-[#1DB954]" />
-                        <span>Spotify Hi-Res Engine</span>
-                      </>
-                    ) : (
-                      <>
-                        <YTMusicIcon className="w-4 h-4 text-[#FF0033]" />
-                        <span>YT Music Engine • Wrapped Synced</span>
-                      </>
-                    )}
-                  </div>
-                </div>
-
-                {/* Iconic 6-Card Quick Picks Grid */}
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5">
-                  <div
-                    onClick={() => setActiveView('liked')}
-                    className="group flex items-center justify-between bg-white/[0.06] hover:bg-white/[0.12] rounded-lg overflow-hidden cursor-pointer transition-all pr-3"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-12 h-12 sm:w-14 sm:h-14 bg-gradient-to-br from-indigo-600 to-emerald-400 flex items-center justify-center shrink-0">
-                        <Heart className="w-5 h-5 text-white fill-white" />
-                      </div>
-                      <span className="font-bold text-xs sm:text-[13px] text-white truncate">
-                        Lagu Disukai
-                      </span>
+              <div className="space-y-5">
+                {/* Pixelated TUI Aesthetic matching Image 2 */}
+                {uiTheme === 'pixel' ? (
+                  <>
+                    {/* Top Category Chips matching Image 2: [ All ] [ Music ] [ Podcasts ] */}
+                    <div className="flex items-center gap-2">
+                      {[
+                        { id: 'all', label: 'All' },
+                        { id: 'music', label: 'Music' },
+                        { id: 'podcasts', label: 'Podcasts' }
+                      ].map((cat) => (
+                        <button
+                          key={cat.id}
+                          onClick={() => {
+                            setPixelCategory(cat.id);
+                            if (cat.id === 'music') fetchTracks('Pop Hits Indonesia', sourceMode, 'Music Feed');
+                            if (cat.id === 'podcasts') fetchTracks('Podcast Indonesia', sourceMode, 'Podcast Feed');
+                            if (cat.id === 'all') fetchTracks('Febri remix Tulus Mahalini', sourceMode, 'Rekomendasi Utama');
+                          }}
+                          className={`px-3.5 py-1 rounded-md text-xs font-mono font-bold transition-all ${
+                            pixelCategory === cat.id
+                              ? 'bg-[#c0caf5] text-[#1a1b26] shadow-sm'
+                              : 'bg-[#24283b] text-[#7aa2f7] hover:bg-[#2d3149] hover:text-[#c0caf5]'
+                          }`}
+                        >
+                          {cat.label}
+                        </button>
+                      ))}
                     </div>
-                  </div>
 
-                  <div
-                    onClick={() => setActiveView('offline')}
-                    className="group flex items-center justify-between bg-white/[0.06] hover:bg-white/[0.12] rounded-lg overflow-hidden cursor-pointer transition-all pr-3"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-12 h-12 sm:w-14 sm:h-14 bg-gradient-to-br from-amber-500 to-yellow-800 flex items-center justify-center shrink-0">
-                        <Download className="w-5 h-5 text-black stroke-[2.3]" />
-                      </div>
-                      <span className="font-bold text-xs sm:text-[13px] text-white truncate">
-                        Offline FLAC ({offlineTracks.length})
-                      </span>
+                    {/* Authentic Neon-Green ASCII Art Header matching Image 2! */}
+                    <div className="py-1 text-[#73daca] font-mono text-[10px] sm:text-xs leading-[1.12] select-none tracking-tight font-bold drop-shadow-[0_0_8px_rgba(115,218,202,0.35)] overflow-x-auto">
+                      <pre className="whitespace-pre">
+{`   ___             _   _  __         _        _ 
+  / __|_ __  ___ _| |_(_)/ _|_  _  _| |_ _  _(_)
+  \\__ \\ '_ \\/ _ \\ | _| |  _| || || |  _| || || |
+  |___/ .__/\\___/\\__|_|_|   \\_, |\\_, |\\__|\\_,_|_|
+      |_|                   |__/ |__/           `}
+                      </pre>
                     </div>
-                  </div>
 
-                  {CURATED_MIXES.map((mix) => (
-                    <div
-                      key={mix.id}
-                      onClick={() => {
-                        if (mix.mode !== sourceMode) setSourceMode(mix.mode);
-                        fetchTracks(mix.query, mix.mode, mix.title);
-                      }}
-                      className="group flex items-center justify-between bg-white/[0.06] hover:bg-white/[0.12] rounded-lg overflow-hidden cursor-pointer transition-all pr-3"
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <img
-                          src={mix.cover}
-                          alt={mix.title}
-                          className="w-12 h-12 sm:w-14 sm:h-14 object-cover shrink-0"
-                        />
-                        <span className="font-bold text-xs sm:text-[13px] text-white truncate">
-                          {mix.title}
+                    {/* 2-Column Grid of 8 Cards matching Image 2! */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                      {/* 1. Sufjan Stevens (Artist Card) */}
+                      <div
+                        onClick={() => openArtistView('Sufjan Stevens')}
+                        className="group flex items-center justify-between bg-[#24283b] hover:bg-[#2d3149] border border-[#3b4261] rounded-lg overflow-hidden cursor-pointer transition-all pr-3"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <img
+                            src="https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=120&q=80"
+                            alt="Sufjan Stevens"
+                            className="w-12 h-12 object-cover shrink-0"
+                          />
+                          <span className="font-mono font-bold text-xs sm:text-[13px] text-[#c0caf5] group-hover:text-emerald-400 truncate">
+                            Sufjan Stevens
+                          </span>
+                        </div>
+                        <span className="text-[10px] font-mono text-zinc-500 uppercase">Creator</span>
+                      </div>
+
+                      {/* 2. Viral Remix Pick (Emoji) */}
+                      <div
+                        onClick={() => fetchTracks('TikTok Viral Remix 2026', sourceMode, 'Viral Remix & Edits')}
+                        className="group flex items-center justify-between bg-[#24283b] hover:bg-[#2d3149] border border-[#3b4261] rounded-lg overflow-hidden cursor-pointer transition-all pr-3"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-12 h-12 bg-gradient-to-br from-indigo-800 to-black flex items-center justify-center shrink-0 text-xl">
+                            🤪
+                          </div>
+                          <span className="font-mono font-bold text-xs sm:text-[13px] text-[#c0caf5] truncate">
+                            Viral Remix &amp; Bass
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* 3. Time Is Tearing Us Apart Radio */}
+                      <div
+                        onClick={() => fetchTracks('Time Is Tearing Us Apart', sourceMode, 'Time Is Tearing Us Apart Radio')}
+                        className="group flex items-center justify-between bg-[#24283b] hover:bg-[#2d3149] border border-[#3b4261] rounded-lg overflow-hidden cursor-pointer transition-all pr-3"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <img
+                            src="https://images.unsplash.com/photo-1514525253161-7a46d19cd819?auto=format&fit=crop&w=120&q=80"
+                            alt="Radio"
+                            className="w-12 h-12 object-cover shrink-0"
+                          />
+                          <span className="font-mono font-bold text-xs sm:text-[13px] text-[#c0caf5] truncate">
+                            Time Is Tearing Us Apart Radio
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* 4. Liked Songs (Purple box with Heart) */}
+                      <div
+                        onClick={() => setActiveView('liked')}
+                        className="group flex items-center justify-between bg-[#24283b] hover:bg-[#2d3149] border border-[#3b4261] rounded-lg overflow-hidden cursor-pointer transition-all pr-3"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 via-purple-600 to-pink-500 flex items-center justify-center shrink-0">
+                            <Heart className="w-5 h-5 text-white fill-white" />
+                          </div>
+                          <span className="font-mono font-bold text-xs sm:text-[13px] text-white truncate">
+                            Liked Songs
+                          </span>
+                        </div>
+                        <span className="text-[10px] font-mono text-[#7aa2f7]">{likedTracks.length}</span>
+                      </div>
+
+                      {/* 5. You seem pretty sad */}
+                      <div
+                        onClick={() => fetchTracks('you seem pretty sad for a girl so in love', sourceMode, 'Indie Melancholy')}
+                        className="group flex items-center justify-between bg-[#24283b] hover:bg-[#2d3149] border border-[#3b4261] rounded-lg overflow-hidden cursor-pointer transition-all pr-3"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <img
+                            src="https://images.unsplash.com/photo-1501386761578-eac5c94b800a?auto=format&fit=crop&w=120&q=80"
+                            alt=""
+                            className="w-12 h-12 object-cover shrink-0"
+                          />
+                          <span className="font-mono font-bold text-xs sm:text-[13px] text-[#c0caf5] truncate">
+                            you seem pretty sad for a girl so in love
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* 6. Random Popular Songs */}
+                      <div
+                        onClick={() => fetchTracks('Pop Hits Indonesia 2026', sourceMode, 'Random Popular Songs')}
+                        className="group flex items-center justify-between bg-[#24283b] hover:bg-[#2d3149] border border-[#3b4261] rounded-lg overflow-hidden cursor-pointer transition-all pr-3"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <img
+                            src="https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?auto=format&fit=crop&w=120&q=80"
+                            alt=""
+                            className="w-12 h-12 object-cover shrink-0"
+                          />
+                          <span className="font-mono font-bold text-xs sm:text-[13px] text-[#c0caf5] truncate">
+                            Random Popular Songs 🎧🎵
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* 7. Irgendwie, irgendwo, irgendwann */}
+                      <div
+                        onClick={() => fetchTracks('Irgendwie irgendwo irgendwann', sourceMode, '80s Synth Dance Mix')}
+                        className="group flex items-center justify-between bg-[#24283b] hover:bg-[#2d3149] border border-[#3b4261] rounded-lg overflow-hidden cursor-pointer transition-all pr-3"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <img
+                            src="https://images.unsplash.com/photo-1518609878373-06d740f60d8b?auto=format&fit=crop&w=120&q=80"
+                            alt=""
+                            className="w-12 h-12 object-cover shrink-0"
+                          />
+                          <span className="font-mono font-bold text-xs sm:text-[13px] text-[#c0caf5] truncate">
+                            Irgendwie, irgendwo (12&quot; Dance Mix) Radio
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* 8. Febri remix (Creator Card matching user image!) */}
+                      <div
+                        onClick={() => openArtistView('Febri remix')}
+                        className="group flex items-center justify-between bg-[#24283b] hover:bg-[#2d3149] border border-emerald-500/40 rounded-lg overflow-hidden cursor-pointer transition-all pr-3 shadow-[0_0_12px_rgba(16,185,129,0.15)]"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <img
+                            src="/febri-dove.png"
+                            alt="Febri remix"
+                            className="w-12 h-12 object-cover shrink-0 bg-black"
+                          />
+                          <div className="min-w-0">
+                            <span className="font-mono font-bold text-xs sm:text-[13px] text-white group-hover:text-emerald-400 truncate block">
+                              Febri remix
+                            </span>
+                            <span className="text-[10px] font-mono text-emerald-400">
+                              ✓ Creator Terverifikasi
+                            </span>
+                          </div>
+                        </div>
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold">
+                          PROFIL
                         </span>
                       </div>
-                      <div
-                        className={`w-8 h-8 rounded-full hidden sm:flex items-center justify-center opacity-0 group-hover:opacity-100 translate-y-1 group-hover:translate-y-0 transition-all shadow-lg shrink-0 ${accentBg}`}
-                      >
-                        <Play className="w-3.5 h-3.5 fill-current ml-0.5" />
+                    </div>
+
+                    {/* Pre-save upcoming releases Carousel matching Image 2 */}
+                    <div className="pt-3 space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-xs font-mono font-bold text-[#c0caf5] tracking-wide">
+                          Pre-save upcoming releases
+                        </h3>
+                        <button
+                          onClick={() => fetchTracks('Upcoming Releases 2026', sourceMode, 'Upcoming Releases')}
+                          className="text-[11px] font-mono text-[#7aa2f7] hover:underline"
+                        >
+                          Show all
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        {[
+                          {
+                            title: 'Javelin (Deluxe Master)',
+                            artist: 'Sufjan Stevens',
+                            cover: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=240&q=80'
+                          },
+                          {
+                            title: 'Tante Culik Aku Dong (Lossless)',
+                            artist: 'Febri remix',
+                            cover: '/febri-dove.png'
+                          },
+                          {
+                            title: 'Worst Christmas Ever!',
+                            artist: 'Retro Holidays',
+                            cover: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?auto=format&fit=crop&w=240&q=80'
+                          },
+                          {
+                            title: 'Midnight Unplugged 2026',
+                            artist: 'Indie Collective',
+                            cover: 'https://images.unsplash.com/photo-1501386761578-eac5c94b800a?auto=format&fit=crop&w=240&q=80'
+                          }
+                        ].map((rel, idx) => (
+                          <div
+                            key={idx}
+                            onClick={() => openArtistView(rel.artist)}
+                            className="group p-2.5 rounded-xl bg-[#24283b] hover:bg-[#2d3149] border border-[#3b4261] transition-all cursor-pointer space-y-2"
+                          >
+                            <img
+                              src={rel.cover}
+                              alt={rel.title}
+                              className="w-full aspect-square rounded-lg object-cover bg-black"
+                            />
+                            <div>
+                              <p className="text-xs font-mono font-bold text-[#c0caf5] truncate group-hover:text-emerald-400">
+                                {rel.title}
+                              </p>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openArtistView(rel.artist);
+                                }}
+                                className="text-[11px] font-mono text-[#7aa2f7] hover:underline truncate block"
+                              >
+                                {rel.artist}
+                              </button>
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     </div>
-                  ))}
-                </div>
+                  </>
+                ) : (
+                  <>
+                    {/* Modern Studio Aesthetic */}
+                    <div className="flex items-center justify-between">
+                      <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight text-white">
+                        {greeting}
+                      </h1>
+                      <div className="flex items-center gap-1.5 text-xs text-zinc-400">
+                        {sourceMode === 'spotify' ? (
+                          <>
+                            <SpotifyIcon className="w-4 h-4 text-[#1DB954]" />
+                            <span>Spotify Hi-Res Engine</span>
+                          </>
+                        ) : (
+                          <>
+                            <YTMusicIcon className="w-4 h-4 text-[#FF0033]" />
+                            <span>YT Music Engine • Wrapped Synced</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Iconic 6-Card Quick Picks Grid */}
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5">
+                      <div
+                        onClick={() => setActiveView('liked')}
+                        className="group flex items-center justify-between bg-white/[0.06] hover:bg-white/[0.12] rounded-lg overflow-hidden cursor-pointer transition-all pr-3"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-12 h-12 sm:w-14 sm:h-14 bg-gradient-to-br from-indigo-600 to-emerald-400 flex items-center justify-center shrink-0">
+                            <Heart className="w-5 h-5 text-white fill-white" />
+                          </div>
+                          <span className="font-bold text-xs sm:text-[13px] text-white truncate">
+                            Lagu Disukai
+                          </span>
+                        </div>
+                      </div>
+
+                      <div
+                        onClick={() => setActiveView('offline')}
+                        className="group flex items-center justify-between bg-white/[0.06] hover:bg-white/[0.12] rounded-lg overflow-hidden cursor-pointer transition-all pr-3"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-12 h-12 sm:w-14 sm:h-14 bg-gradient-to-br from-amber-500 to-yellow-800 flex items-center justify-center shrink-0">
+                            <Download className="w-5 h-5 text-black stroke-[2.3]" />
+                          </div>
+                          <span className="font-bold text-xs sm:text-[13px] text-white truncate">
+                            Offline FLAC ({offlineTracks.length})
+                          </span>
+                        </div>
+                      </div>
+
+                      {CURATED_MIXES.map((mix) => (
+                        <div
+                          key={mix.id}
+                          onClick={() => {
+                            if (mix.mode !== sourceMode) setSourceMode(mix.mode);
+                            fetchTracks(mix.query, mix.mode, mix.title);
+                          }}
+                          className="group flex items-center justify-between bg-white/[0.06] hover:bg-white/[0.12] rounded-lg overflow-hidden cursor-pointer transition-all pr-3"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <img
+                              src={mix.cover}
+                              alt={mix.title}
+                              className="w-12 h-12 sm:w-14 sm:h-14 object-cover shrink-0"
+                            />
+                            <span className="font-bold text-xs sm:text-[13px] text-white truncate">
+                              {mix.title}
+                            </span>
+                          </div>
+                          <div
+                            className={`w-8 h-8 rounded-full hidden sm:flex items-center justify-center opacity-0 group-hover:opacity-100 translate-y-1 group-hover:translate-y-0 transition-all shadow-lg shrink-0 ${accentBg}`}
+                          >
+                            <Play className="w-3.5 h-3.5 fill-current ml-0.5" />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
               </div>
             )}
+
+            {/* === VIEW: ARTIST / CREATOR PROFILE === */}
+            {activeView === 'artist' && activeArtist && (() => {
+              const details = getArtistDetails(activeArtist);
+              const artistAvatar =
+                activeArtist === 'Febri remix'
+                  ? '/febri-dove.png'
+                  : tracks[0]?.cover || currentTrack?.cover || '/febri-dove.png';
+              return (
+                <div className="space-y-6 pt-2">
+                  <div className="flex items-center justify-between">
+                    <button
+                      onClick={() => setActiveView('discover')}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs font-mono text-zinc-300 transition-colors"
+                    >
+                      <ArrowLeft className="w-3.5 h-3.5" />
+                      <span>Kembali ke Beranda</span>
+                    </button>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-mono px-2.5 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-bold">
+                        PROFIL CREATOR RESMI
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Hero Banner */}
+                  <div className="relative rounded-2xl overflow-hidden bg-gradient-to-r from-emerald-950 via-slate-900 to-black p-6 sm:p-8 border border-white/[0.08] shadow-2xl">
+                    <div className="flex flex-col sm:flex-row items-center sm:items-end gap-6 relative z-10">
+                      <div className="w-28 h-28 sm:w-36 sm:h-36 rounded-full overflow-hidden shadow-2xl border-2 border-emerald-400/50 shrink-0 bg-zinc-900 group">
+                        <img
+                          src={artistAvatar}
+                          alt={activeArtist}
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                        />
+                      </div>
+                      <div className="space-y-2 text-center sm:text-left flex-1 min-w-0">
+                        <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-xs font-mono font-bold">
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          <span>Artis Terverifikasi</span>
+                        </div>
+                        <h1 className="text-3xl sm:text-5xl font-black text-white tracking-tight truncate">
+                          {activeArtist}
+                        </h1>
+                        <p className="text-xs sm:text-sm text-zinc-300 font-mono">
+                          {details.listeners} pendengar bulanan • Peringkat #{details.rank} di Indonesia
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Action Buttons */}
+                    <div className="flex flex-wrap items-center gap-3 mt-6 pt-5 border-t border-white/10 relative z-10">
+                      <button
+                        onClick={() => {
+                          if (tracks.length > 0) playTrack(tracks[0]);
+                        }}
+                        className="flex items-center gap-2 px-6 py-3 rounded-full bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-sm shadow-lg hover:scale-105 transition-all"
+                      >
+                        <Play className="w-4 h-4 fill-current ml-0.5" />
+                        <span>Putar Semua Lagu</span>
+                      </button>
+
+                      <button
+                        onClick={() => toggleFollowArtist(activeArtist)}
+                        className={`flex items-center gap-2 px-5 py-3 rounded-full font-bold text-xs border transition-all ${
+                          isFollowed(activeArtist)
+                            ? 'bg-white/15 border-emerald-400 text-emerald-300'
+                            : 'border-zinc-700 text-white hover:border-white'
+                        }`}
+                      >
+                        {isFollowed(activeArtist) ? (
+                          <>
+                            <Check className="w-4 h-4 text-emerald-400" />
+                            <span>Mengikuti</span>
+                          </>
+                        ) : (
+                          <>
+                            <Plus className="w-4 h-4" />
+                            <span>Ikuti Creator</span>
+                          </>
+                        )}
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          const nextMode = sourceMode === 'spotify' ? 'ytmusic' : 'spotify';
+                          setSourceMode(nextMode);
+                          fetchTracks(activeArtist, nextMode, `Koleksi Artis: ${activeArtist}`);
+                        }}
+                        className="flex items-center gap-2 px-4 py-3 rounded-full bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 text-xs font-mono font-semibold"
+                      >
+                        <span>Cari di:</span>
+                        <span className={sourceMode === 'spotify' ? 'text-rose-400 font-bold' : 'text-emerald-400 font-bold'}>
+                          {sourceMode === 'spotify' ? 'YT Music →' : 'Spotify →'}
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* About the Artist Card matching Image 2 */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="md:col-span-2 p-5 rounded-2xl bg-white/[0.04] border border-white/[0.08] space-y-3">
+                      <h3 className="text-sm font-bold text-white flex items-center gap-2 font-mono">
+                        <Info className="w-4 h-4 text-emerald-400" />
+                        <span>Tentang {activeArtist}</span>
+                      </h3>
+                      <p className="text-xs sm:text-[13px] text-zinc-300 leading-relaxed">
+                        {details.bio}
+                      </p>
+                      <div className="flex flex-wrap gap-2 pt-2">
+                        {details.genres.map((g, idx) => (
+                          <span key={idx} className="text-[10px] font-mono px-2.5 py-0.5 rounded-full bg-white/5 border border-white/10 text-zinc-300">
+                            #{g}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="p-5 rounded-2xl bg-white/[0.04] border border-white/[0.08] space-y-2.5">
+                      <h4 className="text-xs font-mono font-bold text-emerald-400 uppercase tracking-wide">Kota Pendengar Terbanyak</h4>
+                      <div className="space-y-2 text-xs">
+                        {details.cities.map((c, i) => (
+                          <div key={i} className="flex items-center justify-between text-zinc-300 font-mono">
+                            <span>{c.city}</span>
+                            <span className="text-zinc-500">{c.count}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* === COLLECTION HEADER FOR LIKED / OFFLINE === */}
             {(activeView === 'liked' || activeView === 'offline') && (
@@ -1238,14 +1795,18 @@ export default function App() {
                       </button>
                     )}
                     <div>
-                      <h2 className="text-base sm:text-lg font-bold text-white">
+                      <h2 className="text-base sm:text-lg font-bold text-white font-mono">
                         {activeView === 'discover'
                           ? activeFeedTitle
                           : activeView === 'liked'
                           ? 'Daftar Lagu Disukai'
-                          : 'File FLAC Tersimpan'}
+                          : activeView === 'offline'
+                          ? 'File FLAC Tersimpan'
+                          : activeView === 'artist'
+                          ? `Daftar Lagu Populer: ${activeArtist}`
+                          : 'Koleksi Lagu'}
                       </h2>
-                      <p className="text-xs text-zinc-500">
+                      <p className="text-xs text-zinc-500 font-mono">
                         Full-Length Stream • Real-Time 24-Bit/96kHz Lossless DSP
                       </p>
                     </div>
@@ -1254,14 +1815,11 @@ export default function App() {
                   {/* Quick Artist Filter Pills on Discover */}
                   {activeView === 'discover' && (
                     <div className="hidden xl:flex items-center gap-1.5">
-                      {['Tulus', 'Mahalini', 'Bernadya', 'Hindia', 'The Weeknd', 'Joji'].map((art) => (
+                      {['Febri remix', 'Tulus', 'Mahalini', 'Bernadya', 'Hindia', 'The Weeknd', 'Sufjan Stevens'].map((art) => (
                         <button
                           key={art}
-                          onClick={() => {
-                            setSearchQuery(art);
-                            fetchTracks(art, sourceMode);
-                          }}
-                          className="px-3 py-1 rounded-full bg-white/[0.05] hover:bg-white/[0.1] text-xs font-medium text-zinc-300 transition-all"
+                          onClick={() => openArtistView(art)}
+                          className="px-3 py-1 rounded-full bg-white/[0.05] hover:bg-white/[0.1] text-xs font-mono font-medium text-zinc-300 hover:text-emerald-400 transition-all cursor-pointer"
                         >
                           {art}
                         </button>
@@ -1353,7 +1911,17 @@ export default function App() {
                                     OFFLINE
                                   </span>
                                 )}
-                                <span className="truncate">{track.artist}</span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openArtistView(track.artist);
+                                  }}
+                                  className="truncate hover:underline hover:text-emerald-400 text-left transition-colors cursor-pointer block font-medium"
+                                  title={`Lihat creator ${track.artist}`}
+                                >
+                                  {track.artist}
+                                </button>
                               </div>
                               {track.lyricMatch?.matched && (
                                 <div className="flex flex-wrap items-center gap-1.5 mt-1">
@@ -1502,7 +2070,16 @@ export default function App() {
                       <h3 className="font-extrabold text-base text-white leading-snug line-clamp-2">
                         {currentTrack.title}
                       </h3>
-                      <p className="text-sm text-zinc-400 mt-0.5 truncate">{currentTrack.artist}</p>
+                      <button
+                        onClick={() => openArtistView(currentTrack.artist)}
+                        className="group/artist flex items-center gap-1.5 text-sm font-semibold text-zinc-300 hover:text-emerald-400 hover:underline mt-0.5 truncate text-left transition-colors cursor-pointer"
+                        title={`Buka profil creator ${currentTrack.artist}`}
+                      >
+                        <span className="truncate">{currentTrack.artist}</span>
+                        <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 font-bold">
+                          ARTIST
+                        </span>
+                      </button>
                     </div>
                     <button
                       onClick={() => toggleLike(currentTrack)}
@@ -1545,6 +2122,35 @@ export default function App() {
                     </div>
                   </div>
 
+                  {/* Image 2 Matching "About the artist" Card */}
+                  <div
+                    onClick={() => openArtistView(currentTrack.artist)}
+                    className="relative group rounded-xl overflow-hidden border border-white/[0.08] hover:border-emerald-500/50 transition-all cursor-pointer shadow-lg"
+                  >
+                    <div
+                      className="h-28 bg-cover bg-center relative"
+                      style={{
+                        backgroundImage: `url(${currentTrack.cover})`
+                      }}
+                    >
+                      <div className="absolute inset-0 bg-gradient-to-t from-[#181926] via-[#181926]/75 to-transparent" />
+                      <div className="absolute top-2.5 left-3 text-[11px] font-mono font-bold text-white/90 uppercase tracking-wider">
+                        About the artist
+                      </div>
+                      <div className="absolute bottom-2.5 left-3 right-3 flex items-center justify-between">
+                        <div className="min-w-0">
+                          <p className="font-bold text-sm text-white truncate group-hover:text-emerald-400 transition-colors">
+                            {currentTrack.artist}
+                          </p>
+                          <p className="text-[10px] text-zinc-400 font-mono">Artis Terverifikasi</p>
+                        </div>
+                        <span className="text-[10px] font-mono px-2 py-1 rounded bg-white/20 text-white backdrop-blur-sm group-hover:bg-emerald-500 group-hover:text-black transition-colors font-bold shrink-0">
+                          Buka Profil →
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
                   {/* Up Next Queue */}
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
@@ -1570,7 +2176,16 @@ export default function App() {
                             <p className="text-xs font-semibold text-zinc-200 truncate">
                               {nextTrack.title}
                             </p>
-                            <p className="text-[11px] text-zinc-500 truncate">{nextTrack.artist}</p>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openArtistView(nextTrack.artist);
+                              }}
+                              className="text-[11px] text-zinc-500 hover:text-emerald-400 hover:underline truncate text-left cursor-pointer transition-colors block"
+                            >
+                              {nextTrack.artist}
+                            </button>
                           </div>
                         </div>
                       ))}
@@ -1713,7 +2328,13 @@ export default function App() {
       </div>
 
       {/* ==================== BOTTOM PLAYER CONTROLLER ==================== */}
-      <footer className="h-[78px] bg-black px-3 sm:px-4 flex items-center justify-between gap-4 shrink-0 border-t border-white/[0.06] sm:border-none z-30">
+      <footer
+        className={`h-[78px] px-3 sm:px-4 flex items-center justify-between gap-4 shrink-0 border-t ${
+          uiTheme === 'pixel'
+            ? 'bg-[#181926] border-[#2f334d] font-mono'
+            : 'bg-black border-white/[0.06]'
+        } sm:border-none z-30 transition-colors`}
+      >
         {/* Left: Now Playing Info (Tap to open Fullscreen Player on Mobile!) */}
         <div
           onClick={() => {
@@ -1743,7 +2364,17 @@ export default function App() {
               <div className="min-w-0">
                 <p className="text-[13px] font-bold text-white truncate">{currentTrack.title}</p>
                 <div className="flex items-center gap-1.5 text-xs text-zinc-400 truncate">
-                  <span className="truncate">{currentTrack.artist}</span>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openArtistView(currentTrack.artist);
+                    }}
+                    className="truncate hover:underline hover:text-emerald-400 text-left transition-colors cursor-pointer font-medium"
+                    title={`Buka creator ${currentTrack.artist}`}
+                  >
+                    {currentTrack.artist}
+                  </button>
                   <span className="hidden sm:inline text-[9px] font-mono px-1 rounded bg-amber-400/15 text-amber-300 font-bold shrink-0">
                     24-BIT
                   </span>
@@ -1806,9 +2437,9 @@ export default function App() {
             </button>
           </div>
 
-          {/* Seek Bar with Timestamps */}
+          {/* Seek Bar with Timestamps (matching Image 2 in Pixel mode!) */}
           <div className="w-full hidden sm:flex items-center gap-2.5 text-[11px] font-mono text-zinc-500">
-            <span className="w-8 text-right">{formatTime(progress)}</span>
+            <span className="w-8 text-right font-mono">{formatTime(progress)}</span>
             <div
               onClick={(e) => {
                 if (!audioRef.current) return;
@@ -1822,12 +2453,18 @@ export default function App() {
             >
               <div
                 style={{ width: `${Math.min(100, (progress / (duration || 1)) * 100)}%` }}
-                className={`h-full rounded-full relative ${accentBar}`}
+                className={`h-full rounded-full relative ${
+                  uiTheme === 'pixel' ? 'bg-[#73daca]' : accentBar
+                }`}
               >
                 <span className="w-3 h-3 rounded-full bg-white shadow absolute right-0 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity" />
               </div>
             </div>
-            <span className="w-8">{formatTime(duration)}</span>
+            <span className={`w-10 text-left font-mono ${uiTheme === 'pixel' ? 'text-[#7aa2f7]' : ''}`}>
+              {uiTheme === 'pixel'
+                ? `-${formatTime(Math.max(0, duration - progress))}`
+                : formatTime(duration)}
+            </span>
           </div>
         </div>
 
@@ -1981,7 +2618,17 @@ export default function App() {
                   <h2 className="text-xl sm:text-2xl font-extrabold text-white truncate">
                     {currentTrack.title}
                   </h2>
-                  <p className="text-sm sm:text-base text-zinc-300 truncate">{currentTrack.artist}</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsFullscreenPlayer(false);
+                      openArtistView(currentTrack.artist);
+                    }}
+                    className="text-sm sm:text-base text-zinc-300 hover:text-emerald-400 hover:underline truncate cursor-pointer transition-colors text-left font-medium block"
+                    title={`Buka creator ${currentTrack.artist}`}
+                  >
+                    {currentTrack.artist}
+                  </button>
                 </div>
                 <div className="flex items-center gap-2">
                   <button

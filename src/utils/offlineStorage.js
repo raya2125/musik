@@ -1,4 +1,4 @@
-// IndexedDB Engine for Offline 24-Bit FLAC Storage on Phone & Desktop App
+// IndexedDB Engine for Offline Audio Storage (Bit-Exact Local Files & Native Opus 48kHz Streams)
 import { getStudioServerUrl } from './apiBridge';
 
 const DB_NAME = 'AuraMusicOfflineDB';
@@ -35,7 +35,7 @@ export async function saveTrackOffline(track, onProgress) {
         title: track.title || 'Track',
         artist: track.artist || 'Artist',
         album: track.album || 'Single',
-        format: 'FLAC'
+        format: 'ORIGINAL'
       });
       if (onProgress) onProgress(40);
       const base = getStudioServerUrl();
@@ -46,7 +46,7 @@ export async function saveTrackOffline(track, onProgress) {
       if (onProgress) onProgress(95);
     }
   } catch (e) {
-    const res = await fetch(track.previewUrl || track.audioUrl);
+    const res = await fetch(track.audioUrl || track.previewUrl);
     audioBlob = await res.blob();
   }
 

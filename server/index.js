@@ -366,10 +366,12 @@ async function searchYouTubeMusic(query) {
       if (v && v.videoId) {
         const seconds = parseDurationToSeconds(v.lengthText?.simpleText);
         if (seconds > 30 && seconds < 1200) {
+          const rawOwner = v.ownerText?.runs?.[0]?.text || 'YouTube Artist';
           videos.push({
             videoId: v.videoId,
             title: v.title?.runs?.[0]?.text || 'YouTube Music Track',
-            artist: (v.ownerText?.runs?.[0]?.text || 'YouTube Artist').replace(/ - Topic$/i, ''),
+            artist: rawOwner.replace(/ - Topic$/i, ''),
+            isTopicMaster: / - Topic$/i.test(rawOwner),
             thumbnail: v.thumbnail?.thumbnails?.[v.thumbnail.thumbnails.length - 1]?.url || '',
             duration: seconds,
             views: v.shortViewCountText?.simpleText || '',
@@ -382,6 +384,54 @@ async function searchYouTubeMusic(query) {
     return videos;
   } catch {
     return [];
+  }
+}
+
+/**
+ * Resolves the official YouTube Music Studio Album Master ("Art Track" / ATV)
+ * directly from record-label DDEX deliveries instead of Music Videos or fan re-uploads.
+ */
+async function findStudioArtTrackId(rawQuery = '') {
+  const cleanQuery = rawQuery
+    .replace(/\b(official\s*(music\s*)?(audio|video|lyric\s*video))\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleanQuery) return null;
+
+  // Do not force studio album ATV if user explicitly wants a live/acoustic/remix/cover version
+  if (/\b(live|acoustic|akustik|unplugged|cover|remix|dj|slowed|reverb|karaoke|concert|session)\b/i.test(cleanQuery)) {
+    return null;
+  }
+
+  try {
+    const res = await fetch('https://music.youtube.com/youtubei/v1/search?prettyPrint=false', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
+      },
+      body: JSON.stringify({
+        context: {
+          client: {
+            clientName: 'WEB_REMIX',
+            clientVersion: '1.20240717.01.00',
+            hl: 'en',
+            gl: 'ID'
+          }
+        },
+        query: cleanQuery,
+        // Official YTM "Songs" filter -> returns label-supplied Studio Art Tracks (ATV)
+        params: 'EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D'
+      }),
+      signal: AbortSignal.timeout(3200)
+    });
+    if (!res.ok) return null;
+    const payload = JSON.stringify(await res.json());
+    const match = payload.match(/"videoId":"([a-zA-Z0-9_-]{11})"/);
+    return match ? match[1] : null;
+  } catch {
+    return null;
   }
 }
 
@@ -400,19 +450,24 @@ async function resolveFullStreamUrl(videoId = '', fallbackUrl = '', searchQuery 
     return pendingResolves.get(cacheKey);
   }
 
-  const targetArg = videoId
-    ? `https://www.youtube.com/watch?v=${videoId}`
-    : `ytsearch1:${searchQuery}`;
-
   const promise = (async () => {
     try {
+      let resolvedVideoId = videoId;
+      if (!resolvedVideoId && searchQuery) {
+        resolvedVideoId = (await findStudioArtTrackId(searchQuery)) || '';
+      }
+
+      const targetArg = resolvedVideoId
+        ? `https://www.youtube.com/watch?v=${resolvedVideoId}`
+        : `ytsearch1:${searchQuery}`;
+
       const { stdout } = await execFileAsync(
         YT_DLP_PATH,
         [
           '--js-runtimes',
           `node:${process.execPath}`,
           '-f',
-          'ba[protocol=https]/ba/bestaudio',
+          '251/ba[acodec=opus][protocol=https]/140/ba[protocol=https]/ba/bestaudio',
           '--no-playlist',
           '--no-warnings',
           '-g',
@@ -549,7 +604,8 @@ app.get('/api/search', async (req, res) => {
         allYtPool.find((v) => v.title.toLowerCase().includes(trackLower.slice(0, 8))) || null;
 
       const q = `${artistName} - ${t.name} official audio`;
-      const vId = extra.preferredVideoId || matchingYt?.videoId || '';
+      const vId =
+        extra.preferredVideoId || (matchingYt?.isTopicMaster ? matchingYt.videoId : '');
       const streamUrl = vId
         ? `/api/stream?videoId=${encodeURIComponent(vId)}&fallback=${encodeURIComponent(
             t.preview_url || ''
@@ -598,7 +654,8 @@ app.get('/api/search', async (req, res) => {
         : matchingYt?.thumbnail || '';
 
       const q = `${item.artistName} - ${item.trackName} official audio`;
-      const vId = extra.preferredVideoId || matchingYt?.videoId || '';
+      const vId =
+        extra.preferredVideoId || (matchingYt?.isTopicMaster ? matchingYt.videoId : '');
       const streamEndpoint = vId
         ? `/api/stream?videoId=${encodeURIComponent(vId)}&fallback=${encodeURIComponent(
             item.previewUrl || ''
@@ -925,7 +982,7 @@ app.get('/api/lyrics', async (req, res) => {
 app.get('/api/download-audio', async (req, res) => {
   let tempFlacPath = null;
   try {
-    const { videoId, url, title = 'Track', artist = 'Artist', album = 'Album', format = 'FLAC' } = req.query;
+    const { videoId, url, title = 'Track', artist = 'Artist', album = 'Album', format = 'ORIGINAL' } = req.query;
     const qParam = url?.includes('q=') ? new URLSearchParams(url.split('?')[1]).get('q') : '';
     const vParam =
       videoId || (url?.includes('videoId=') ? new URLSearchParams(url.split('?')[1]).get('videoId') : '');
@@ -939,12 +996,11 @@ app.get('/api/download-audio', async (req, res) => {
       return res.status(503).send('FLAC conversion unavailable; refusing to label the source stream as FLAC');
     }
 
-    const safeName = `${artist} - ${title} [FLAC conversion; source quality unverified].${format === 'FLAC' ? 'flac' : 'm4a'}`.replace(
-      /[^a-zA-Z0-9 \-\.\[\]\(\)]/g,
-      ''
-    );
-
     if (FFMPEG_PATH && format === 'FLAC') {
+      const flacSafeName = `${artist} - ${title} [FLAC conversion].flac`.replace(
+        /[^a-zA-Z0-9 \-\.\[\]\(\)]/g,
+        ''
+      );
       tempFlacPath = path.join(os.tmpdir(), `aura_${Date.now()}_${Math.random().toString(36).slice(2)}.flac`);
       await execFileAsync(
         FFMPEG_PATH,
@@ -973,7 +1029,7 @@ app.get('/api/download-audio', async (req, res) => {
       const stat = fs.statSync(tempFlacPath);
       res.setHeader('Content-Type', 'audio/flac');
       res.setHeader('Content-Length', stat.size);
-      res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+      res.setHeader('Content-Disposition', `attachment; filename="${flacSafeName}"`);
 
       const readStream = fs.createReadStream(tempFlacPath);
       readStream.on('close', () => {
@@ -983,8 +1039,14 @@ app.get('/api/download-audio', async (req, res) => {
     }
 
     const response = await fetch(sourceUrl);
+    const upstreamMime = (response.headers.get('content-type') || 'audio/webm').split(';')[0].trim();
+    const ext = upstreamMime.includes('mp4') ? 'm4a' : upstreamMime.includes('mpeg') ? 'mp3' : 'webm';
+    const safeName = `${artist} - ${title} [HQ Opus 48kHz].${ext}`.replace(
+      /[^a-zA-Z0-9 \-\.\[\]\(\)]/g,
+      ''
+    );
     const buffer = Buffer.from(await response.arrayBuffer());
-    res.setHeader('Content-Type', format === 'FLAC' ? 'audio/flac' : 'audio/mp4');
+    res.setHeader('Content-Type', upstreamMime);
     res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
     res.send(buffer);
   } catch (err) {

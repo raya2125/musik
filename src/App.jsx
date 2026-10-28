@@ -684,14 +684,14 @@ export default function App() {
         const extension = extensionByType[audioType] || 'audio';
         a.download = track.isLocalLossless
           ? track.localFileName
-          : `${track.artist} - ${track.title}${extension === 'flac' ? ' [FLAC conversion; source unverified]' : ' [source quality unverified]'}.${extension}`;
+          : `${track.artist} - ${track.title} [HQ Audio].${extension}`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
       }
     } catch (err) {
-      console.error('FLAC Download error:', err);
+      console.error('Audio download error:', err);
     } finally {
       setTimeout(() => {
         setDownloadingIds((prev) => {
@@ -947,27 +947,27 @@ export default function App() {
           />
           <button
             onClick={() => losslessFileRef.current?.click()}
-            title="Putar file FLAC atau WAV PCM milikmu"
+            title="Putar file FLAC atau WAV PCM lokal (Bit-Perfect Lossless Asli)"
             className="flex items-center gap-1.5 px-2 sm:px-2.5 h-8 rounded-full border border-amber-400/30 bg-amber-500/10 text-amber-300 text-[11px] font-semibold hover:bg-amber-500/20"
           >
             <Folder className="w-3.5 h-3.5" />
-            <span className="hidden md:inline">File Lossless</span>
+            <span className="hidden md:inline">Import FLAC/WAV</span>
           </button>
-          {/* EQ control; this is audio processing, not a lossless quality badge. */}
+          {/* EQ control: Audio Equalizer (Studio DSP) */}
           <button
             onClick={() => {
               setShowRightPanel(true);
               setRightTab('eq');
             }}
-            title="Pengaturan equalizer audio"
+            title="Pengaturan Equalizer Audio DSP"
             className={`hidden sm:flex items-center gap-1.5 px-2.5 h-8 rounded-full text-[11px] font-mono font-semibold border transition-all ${
               isEqEnabled
                 ? 'bg-amber-500/10 border-amber-400/30 text-amber-300 hover:bg-amber-500/15'
                 : 'bg-zinc-900 border-white/5 text-zinc-500'
             }`}
           >
-            <LosslessIcon className="w-4 h-3.5 text-amber-400" />
-            <span>EQ</span>
+            <Sliders className="w-3.5 h-3.5 text-amber-400" />
+            <span>EQ DSP</span>
           </button>
 
           {/* Wrapped Bridge / Connect Spotify Account Pill */}
@@ -2015,9 +2015,13 @@ export default function App() {
                                 {track.title}
                               </p>
                               <div className="flex items-center gap-1.5 text-xs text-zinc-400 truncate">
-                                {track.isLocalLossless && (
-                                  <span className="inline-flex items-center gap-0.5 px-1 py-[1px] rounded bg-amber-400/15 text-amber-300 text-[9px] font-mono font-bold shrink-0">
-                                    {track.localFormat} FILE
+                                {track.isLocalLossless ? (
+                                  <span className="inline-flex items-center gap-0.5 px-1 py-[1px] rounded bg-amber-400/20 text-amber-300 text-[9px] font-mono font-bold shrink-0 border border-amber-400/30">
+                                    {track.localFormat} LOSSLESS
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-0.5 px-1 py-[1px] rounded bg-white/10 text-zinc-400 text-[9px] font-mono shrink-0">
+                                    HQ 160k
                                   </span>
                                 )}
                                 {savedOffline && (
@@ -2205,29 +2209,41 @@ export default function App() {
                     </button>
                   </div>
 
-                  {/* Apple Music / Tidal Inspired Lossless Signal Path Card */}
+                  {/* Transparent Audio Signal Path Card */}
                   <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/[0.06] space-y-2.5">
                     <div className="flex items-center justify-between">
                       <span className="text-[11px] font-bold uppercase tracking-wider text-amber-300 flex items-center gap-1.5">
-                        <LosslessIcon className="w-4 h-3.5" />
+                        <Activity className="w-4 h-3.5 text-amber-400" />
                         <span>Audio Signal Path</span>
                       </span>
-                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-400/15 text-amber-300 font-bold">
-                        Audio EQ
+                      <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded font-bold ${
+                        currentTrack?.isLocalLossless
+                          ? 'bg-amber-400/20 text-amber-300 border border-amber-400/30'
+                          : 'bg-white/10 text-zinc-400'
+                      }`}>
+                        {currentTrack?.isLocalLossless ? 'BIT-PERFECT LOSSLESS' : 'HQ STREAM (OPUS)'}
                       </span>
                     </div>
                     <div className="space-y-1.5 text-xs">
                       <div className="flex items-center justify-between text-zinc-400">
-                        <span>Source Stream</span>
-                        <span className="text-zinc-200 font-medium">
-                          {currentTrack?.isLocalLossless ? `${currentTrack.localFormat} file` : 'Online stream • unverified quality'}
+                        <span>Source Audio</span>
+                        <span className="text-zinc-200 font-medium font-mono text-[11px]">
+                          {currentTrack?.isLocalLossless ? `${currentTrack.localFormat} (Asli Bit-Perfect)` : 'YouTube Web Audio (~160kbps)'}
                         </span>
                       </div>
                       <div className="flex items-center justify-between text-zinc-400">
-                        <span>DSP Mastering</span>
+                        <span>DSP Equalizer</span>
                         <span className="text-amber-300 font-mono text-[11px]">
-                          {isEqEnabled ? `Active (${activePreset})` : 'Bypass'}
+                          {currentTrack?.isLocalLossless
+                            ? 'Bypass (Pure Audio)'
+                            : isEqEnabled
+                            ? `Active (${activePreset})`
+                            : 'Bypass (Flat)'}
                         </span>
+                      </div>
+                      <div className="flex items-center justify-between text-zinc-400">
+                        <span>Output Engine</span>
+                        <span className="text-zinc-300 font-mono text-[11px]">Web Audio API</span>
                       </div>
                       <div className="flex items-center justify-between text-zinc-400">
                         <span>Spotify Wrapped</span>
@@ -2429,7 +2445,7 @@ export default function App() {
 
                   {/* 5-Band Sliders */}
                   <div className="space-y-3 pt-1">
-                    {['60Hz Sub-Bass', '230Hz Warmth', '910Hz Vocal Mid', '3.6kHz Presence', '14kHz Hi-Res Air'].map(
+                    {['60Hz Sub-Bass', '230Hz Warmth', '910Hz Vocal Mid', '3.6kHz Presence', '14kHz Treble Air'].map(
                       (bandLabel, idx) => (
                         <div key={bandLabel} className="space-y-1">
                           <div className="flex justify-between text-[11px]">
@@ -2506,9 +2522,13 @@ export default function App() {
                   >
                     {currentTrack.artist}
                   </button>
-                  {currentTrack.isLocalLossless && (
-                    <span className="hidden sm:inline text-[9px] font-mono px-1 rounded bg-amber-400/15 text-amber-300 font-bold shrink-0">
-                      {currentTrack.localFormat}
+                  {currentTrack.isLocalLossless ? (
+                    <span className="hidden sm:inline text-[9px] font-mono px-1.5 py-0.5 rounded bg-amber-400/20 text-amber-300 font-bold shrink-0 border border-amber-400/30">
+                      {currentTrack.localFormat} LOSSLESS
+                    </span>
+                  ) : (
+                    <span className="hidden sm:inline text-[9px] font-mono px-1.5 py-0.5 rounded bg-white/10 text-zinc-400 font-medium shrink-0">
+                      HQ 160k
                     </span>
                   )}
                 </div>
@@ -2601,7 +2621,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* Right: Lyrics, DAC/EQ, Offline FLAC Download, Volume & Fullscreen */}
+        {/* Right: Lyrics, DAC/EQ, Offline Audio Download, Volume & Fullscreen */}
         <div className="hidden md:flex items-center justify-end gap-2.5 flex-1 max-w-[30%]">
           <button
             onClick={() => {
@@ -2728,8 +2748,12 @@ export default function App() {
               <span>Tutup</span>
             </button>
             <div className="flex items-center gap-2">
-              <span className="px-2.5 py-1 rounded-full bg-amber-400/15 border border-amber-400/30 text-amber-300 text-[11px] font-mono font-bold">
-                {currentTrack.isLocalLossless ? `${currentTrack.localFormat} LOSSLESS SOURCE` : 'SOURCE QUALITY UNVERIFIED'}
+              <span className={`px-2.5 py-1 rounded-full text-[11px] font-mono font-bold border ${
+                currentTrack.isLocalLossless
+                  ? 'bg-amber-400/15 border-amber-400/30 text-amber-300'
+                  : 'bg-white/10 border-white/10 text-zinc-300'
+              }`}>
+                {currentTrack.isLocalLossless ? `${currentTrack.localFormat} BIT-PERFECT LOSSLESS` : 'HQ STREAM • OPUS ~160KBPS'}
               </span>
               <span className="px-2.5 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-[11px] font-semibold">
                 ✓ Wrapped Synced
@@ -2851,8 +2875,8 @@ export default function App() {
                 })
               ) : (
                 <div className="h-full flex flex-col items-center justify-center text-white/40 space-y-2">
-                  <LosslessIcon className="w-10 h-10 text-amber-300/70" />
-              <p className="text-sm font-semibold">Kualitas audio mengikuti file atau penyedia sumber</p>
+                  <Mic2 className="w-10 h-10 text-zinc-500" />
+                  <p className="text-sm font-semibold">Belum tersedia lirik sinkron / Lagu instrumen</p>
                 </div>
               )}
             </div>

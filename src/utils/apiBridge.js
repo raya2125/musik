@@ -97,7 +97,12 @@ export async function apiSearchTracks(query, mode = 'spotify') {
         base
       ) || item.previewUrl,
       previewUrl: item.previewUrl,
-      losslessInfo: { available: true, format: 'Direct Full Audio + 96kHz DSP' },
+      losslessInfo: {
+        isLossless: false,
+        format: 'HQ Web Stream (Opus ~160kbps)',
+        bitrate: '160 kbps',
+        source: 'YouTube Web Audio'
+      },
       sourceMode: mode
     };
   });

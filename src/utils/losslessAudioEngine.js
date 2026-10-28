@@ -30,7 +30,7 @@ export class AudioProcessingEngine {
       { freq: 230, type: 'peaking', gain: 1.2, label: '230Hz Bass' },
       { freq: 910, type: 'peaking', gain: 0.0, label: '910Hz Mid' },
       { freq: 3600, type: 'peaking', gain: 1.8, label: '3.6kHz Clarity' },
-      { freq: 14000, type: 'highshelf', gain: 3.2, label: '14kHz Hi-Res Air' },
+      { freq: 14000, type: 'highshelf', gain: 3.2, label: '14kHz Treble Air' },
     ];
 
     this.bands = freqs.map((f) => {

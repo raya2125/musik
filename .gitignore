@@ -22,6 +22,8 @@ flutter-mobile/build/
 
 # Sessions & sensitive configs
 server/spotify-session.json
+server/.ytcache/
+server/.stream-cache.json
 
 # Logs
 *.log

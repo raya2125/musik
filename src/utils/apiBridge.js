@@ -37,10 +37,81 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 4500) {
 
 function resolveStreamUrl(audioUrl, baseUrl) {
   if (!audioUrl) return '';
-  if (audioUrl.startsWith('/api/') && baseUrl) {
-    return `${baseUrl}${audioUrl}`;
+  if (audioUrl.startsWith('/api/')) {
+    if (baseUrl) return `${baseUrl}${audioUrl}`;
+    if (
+      typeof window !== 'undefined' &&
+      !isNativeApk() &&
+      (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+    ) {
+      return `http://127.0.0.1:3001${audioUrl}`;
+    }
   }
   return audioUrl;
+}
+
+export function resolveFastStreamSrc(audioUrl) {
+  return resolveStreamUrl(audioUrl, getStudioServerUrl());
+}
+
+const prewarmSentHistory = new Map();
+
+/**
+ * Fire-and-forget pre-warming of stream URLs + opening 256 KB RAM audio buffers on Studio Server
+ */
+export function apiPrewarmTracks(tracks = [], urgent = false) {
+  if (!Array.isArray(tracks) || tracks.length === 0) return;
+
+  const now = Date.now();
+  const payload = [];
+
+  for (const t of tracks) {
+    if (!t || t.isLocalLossless || t.audioBlob) continue;
+    let videoId = t.ytVideoId || '';
+    let q = t.searchStreamQuery || '';
+    let fallback = t.previewUrl || '';
+
+    if (!videoId && !q && typeof t.audioUrl === 'string' && t.audioUrl.includes('/api/stream?')) {
+      try {
+        const qs = new URLSearchParams(t.audioUrl.split('?')[1] || '');
+        videoId = qs.get('videoId') || '';
+        q = qs.get('q') || '';
+        fallback = fallback || qs.get('fallback') || '';
+      } catch {}
+    }
+    if (!videoId && !q && t.title) {
+      q = `${t.artist || ''} - ${t.title} official audio`.trim();
+    }
+
+    const dedupKey = videoId || (q ? `q:${q.toLowerCase()}` : '');
+    if (!dedupKey) continue;
+
+    const lastSent = prewarmSentHistory.get(dedupKey) || 0;
+    if (!urgent && now - lastSent < 10 * 60 * 1000) continue;
+    if (urgent && now - lastSent < 25 * 1000) continue;
+
+    prewarmSentHistory.set(dedupKey, now);
+    payload.push({ videoId, q, fallback });
+  }
+
+  if (payload.length === 0) return;
+
+  let base = getStudioServerUrl();
+  if (
+    !base &&
+    typeof window !== 'undefined' &&
+    !isNativeApk() &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+  ) {
+    base = 'http://127.0.0.1:3001';
+  }
+
+  fetch(`${base}/api/prewarm`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tracks: payload, urgent }),
+    priority: urgent ? 'high' : 'low'
+  }).catch(() => {});
 }
 
 /**

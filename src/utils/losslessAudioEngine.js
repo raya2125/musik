@@ -1,11 +1,12 @@
-// Clean Web Audio API DSP Engine
-// Provides 5-Band Parametric EQ with Automatic Anti-Clip Preamp Headroom,
-// Transparent Peak Safety Limiter, and Real-Time Spectrum Analyzer.
+// Clean Web Audio API Dual-Deck DSP Engine
+// Supports two <audio> elements (Active Deck + Standby Preload Deck) routed into a shared
+// 5-Band Parametric EQ with Automatic Anti-Clip Preamp Headroom, Peak Safety Limiter, and Spectrum Analyzer.
 
 export class AudioProcessingEngine {
   constructor() {
     this.ctx = null;
-    this.source = null;
+    this.connectedDecks = new Map(); // HTMLAudioElement -> { source, gain }
+    this.activeElement = null;
     this.analyser = null;
     this.bands = [];
     this.preamp = null;
@@ -15,57 +16,84 @@ export class AudioProcessingEngine {
   }
 
   init(audioElement) {
-    if (this.isInitialized || !audioElement) return;
-    const AudioContext = window.AudioContext || window.webkitAudioContext;
-    // Use 'playback' buffer sizing for smooth, dropout-free music rendering
-    this.ctx = new AudioContext({ latencyHint: 'playback' });
+    if (!audioElement) return;
 
-    this.source = this.ctx.createMediaElementSource(audioElement);
-    this.preamp = this.ctx.createGain();
-    this.limiter = this.ctx.createDynamicsCompressor();
-    this.analyser = this.ctx.createAnalyser();
-    this.analyser.fftSize = 128;
+    if (!this.isInitialized) {
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      // Use 'playback' buffer sizing for smooth, dropout-free music rendering
+      this.ctx = new AudioContext({ latencyHint: 'playback' });
 
-    // Transparent brickwall safety limiter to prevent 0 dBFS digital clipping under EQ boost
-    this.limiter.threshold.value = -0.6;
-    this.limiter.knee.value = 2.0;
-    this.limiter.ratio.value = 18.0;
-    this.limiter.attack.value = 0.002;
-    this.limiter.release.value = 0.12;
+      this.preamp = this.ctx.createGain();
+      this.limiter = this.ctx.createDynamicsCompressor();
+      this.analyser = this.ctx.createAnalyser();
+      this.analyser.fftSize = 128;
 
-    // Five-band musical parametric equalizer
-    const freqs = [
-      { freq: 60, type: 'lowshelf', gain: 2.5, q: 0.71, label: '60Hz Sub' },
-      { freq: 230, type: 'peaking', gain: 1.2, q: 0.85, label: '230Hz Bass' },
-      { freq: 910, type: 'peaking', gain: 0.0, q: 0.85, label: '910Hz Mid' },
-      { freq: 3600, type: 'peaking', gain: 1.8, q: 0.85, label: '3.6kHz Clarity' },
-      { freq: 14000, type: 'highshelf', gain: 3.2, q: 0.71, label: '14kHz Treble Air' },
-    ];
+      // Transparent brickwall safety limiter to prevent 0 dBFS digital clipping under EQ boost
+      this.limiter.threshold.value = -0.6;
+      this.limiter.knee.value = 2.0;
+      this.limiter.ratio.value = 18.0;
+      this.limiter.attack.value = 0.002;
+      this.limiter.release.value = 0.12;
 
-    this.bands = freqs.map((f) => {
-      const filter = this.ctx.createBiquadFilter();
-      filter.type = f.type;
-      filter.frequency.value = f.freq;
-      filter.Q.value = f.q;
-      filter.gain.value = f.gain;
-      return { filter, ...f };
-    });
+      // Five-band musical parametric equalizer
+      const freqs = [
+        { freq: 60, type: 'lowshelf', gain: 2.5, q: 0.71, label: '60Hz Sub' },
+        { freq: 230, type: 'peaking', gain: 1.2, q: 0.85, label: '230Hz Bass' },
+        { freq: 910, type: 'peaking', gain: 0.0, q: 0.85, label: '910Hz Mid' },
+        { freq: 3600, type: 'peaking', gain: 1.8, q: 0.85, label: '3.6kHz Clarity' },
+        { freq: 14000, type: 'highshelf', gain: 3.2, q: 0.71, label: '14kHz Treble Air' },
+      ];
 
-    // Connect chain: Source -> Auto-Headroom Preamp -> EQ Bands -> Safety Limiter -> Analyser -> Destination
-    let current = this.source;
-    current.connect(this.preamp);
-    current = this.preamp;
+      this.bands = freqs.map((f) => {
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = f.type;
+        filter.frequency.value = f.freq;
+        filter.Q.value = f.q;
+        filter.gain.value = f.gain;
+        return { filter, ...f };
+      });
 
-    this.bands.forEach((b) => {
-      current.connect(b.filter);
-      current = b.filter;
-    });
+      // Shared DSP Chain: Deck Gains -> Auto-Headroom Preamp -> EQ Bands -> Safety Limiter -> Analyser -> Destination
+      let current = this.preamp;
+      this.bands.forEach((b) => {
+        current.connect(b.filter);
+        current = b.filter;
+      });
 
-    current.connect(this.limiter);
-    this.limiter.connect(this.analyser);
-    this.analyser.connect(this.ctx.destination);
-    this.isInitialized = true;
-    this._syncPreampAndLimiter();
+      current.connect(this.limiter);
+      this.limiter.connect(this.analyser);
+      this.analyser.connect(this.ctx.destination);
+      this.isInitialized = true;
+      this._syncPreampAndLimiter();
+    }
+
+    if (!this.connectedDecks.has(audioElement)) {
+      const source = this.ctx.createMediaElementSource(audioElement);
+      const deckGain = this.ctx.createGain();
+      deckGain.gain.value = this.activeElement && this.activeElement !== audioElement ? 0.0 : 1.0;
+      source.connect(deckGain);
+      deckGain.connect(this.preamp);
+      this.connectedDecks.set(audioElement, { source, gain: deckGain });
+    }
+
+    if (!this.activeElement) {
+      this.setActiveElement(audioElement);
+    }
+  }
+
+  setActiveElement(audioElement) {
+    if (!audioElement) return;
+    if (!this.isInitialized || !this.connectedDecks.has(audioElement)) {
+      this.init(audioElement);
+    }
+    this.activeElement = audioElement;
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    for (const [el, deck] of this.connectedDecks.entries()) {
+      const target = el === audioElement ? 1.0 : 0.0;
+      deck.gain.gain.cancelScheduledValues(now);
+      deck.gain.gain.setValueAtTime(target, now);
+    }
   }
 
   _syncPreampAndLimiter() {

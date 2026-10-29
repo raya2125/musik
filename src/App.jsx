@@ -22,7 +22,9 @@ import {
   apiGetSpotifyPlaylists,
   apiGetSpotifyPlaylistTracks,
   apiGetRecommendations,
-  getSpotifyLoginUrl
+  getSpotifyLoginUrl,
+  apiPrewarmTracks,
+  resolveFastStreamSrc
 } from './utils/apiBridge';
 
 /* --- Authentic Minimalist Brand & Audio Vector Icons --- */
@@ -249,7 +251,14 @@ export default function App() {
   const [deferredPrompt, setDeferredPrompt] = useState(null);
   const [serverUrlInput, setServerUrlInput] = useState(() => getStudioServerUrl());
 
+  const deckARef = useRef(null);
+  const deckBRef = useRef(null);
   const audioRef = useRef(null);
+  const standbyDeckRef = useRef(null);
+  const standbyTrackIdRef = useRef(null);
+  const playRequestIdRef = useRef(0);
+  const activeBlobUrlRef = useRef(null);
+  const hoverPreloadTimerRef = useRef(null);
   const losslessFileRef = useRef(null);
   const animFrameRef = useRef(null);
 
@@ -516,10 +525,65 @@ export default function App() {
     } catch {}
   };
 
+  const resolvePlaySrc = (track) => {
+    if (!track) return { src: '', isObjectUrl: false };
+    if (track.audioBlob) {
+      return { src: URL.createObjectURL(track.audioBlob), isObjectUrl: true };
+    }
+    const offlineMatch = offlineTracks.find((t) => t.id === track.id);
+    if (offlineMatch?.audioBlob) {
+      return { src: URL.createObjectURL(offlineMatch.audioBlob), isObjectUrl: true };
+    }
+    return { src: resolveFastStreamSrc(track.audioUrl || ''), isObjectUrl: false };
+  };
+
+  const preloadIntoStandbyDeck = (track) => {
+    if (!track || !standbyDeckRef.current) return;
+    if (track.id === currentTrack?.id || track.audioBlob || track.isLocalLossless) return;
+    if (offlineTracks.some((t) => t.id === track.id)) return;
+    if (
+      standbyTrackIdRef.current === track.id &&
+      standbyDeckRef.current.src &&
+      !standbyDeckRef.current.error
+    ) {
+      return;
+    }
+
+    const preloadSrc = resolveFastStreamSrc(track.audioUrl || '');
+    if (!preloadSrc) return;
+
+    const deck = standbyDeckRef.current;
+    try {
+      deck.pause();
+      deck.muted = true;
+      deck.preload = 'auto';
+      deck.src = preloadSrc;
+      deck.load();
+      standbyTrackIdRef.current = track.id;
+    } catch {}
+  };
+
+  const handleTrackRowEnter = (track) => {
+    if (!track || track.id === currentTrack?.id) return;
+    apiPrewarmTracks([track], true);
+    if (hoverPreloadTimerRef.current) clearTimeout(hoverPreloadTimerRef.current);
+    hoverPreloadTimerRef.current = setTimeout(() => {
+      preloadIntoStandbyDeck(track);
+    }, 60);
+  };
+
+  const handleTrackRowLeave = () => {
+    if (hoverPreloadTimerRef.current) {
+      clearTimeout(hoverPreloadTimerRef.current);
+      hoverPreloadTimerRef.current = null;
+    }
+  };
+
   const playTrack = async (track, startAtSeconds = 0) => {
     if (!track || !audioRef.current) return;
+    const reqId = ++playRequestIdRef.current;
+
     setCurrentTrack(track);
-    setIsBuffering(true);
     setProgress(startAtSeconds || 0);
     setDuration(track.duration || 215);
 
@@ -528,31 +592,81 @@ export default function App() {
       setRightTab('lyrics');
     }
 
-    let playSrc = track.audioUrl;
-    if (track.audioBlob) {
-      playSrc = URL.createObjectURL(track.audioBlob);
-    } else {
-      const offlineMatch = offlineTracks.find((t) => t.id === track.id);
-      if (offlineMatch?.audioBlob) {
-        playSrc = URL.createObjectURL(offlineMatch.audioBlob);
+    const hasOfflineOrLocalBlob =
+      Boolean(track.audioBlob) || offlineTracks.some((t) => t.id === track.id && t.audioBlob);
+
+    const canSwapStandby =
+      startAtSeconds <= 0 &&
+      !hasOfflineOrLocalBlob &&
+      standbyDeckRef.current &&
+      standbyTrackIdRef.current === track.id &&
+      standbyDeckRef.current.src &&
+      !standbyDeckRef.current.error;
+
+    if (activeBlobUrlRef.current) {
+      URL.revokeObjectURL(activeBlobUrlRef.current);
+      activeBlobUrlRef.current = null;
+    }
+
+    // Zero-Delay Path: Instant Hardware Buffer Swap to pre-decoded Standby Deck!
+    if (canSwapStandby) {
+      const oldDeck = audioRef.current;
+      const newDeck = standbyDeckRef.current;
+      oldDeck.pause();
+      oldDeck.muted = true;
+
+      audioRef.current = newDeck;
+      standbyDeckRef.current = oldDeck;
+      standbyTrackIdRef.current = null;
+
+      newDeck.muted = false;
+      newDeck.volume = isMuted ? 0 : volume;
+      setIsBuffering(newDeck.readyState < 3);
+
+      try {
+        dspEngine.init(newDeck);
+        dspEngine.setActiveElement(newDeck);
+        dspEngine.resume();
+        dspEngine.setEqEnabled(track.isLocalLossless ? false : isEqEnabled);
+        if (newDeck.currentTime > 0.25) newDeck.currentTime = 0;
+        await newDeck.play();
+        if (reqId !== playRequestIdRef.current) return;
+        setIsPlaying(true);
+        setIsBuffering(false);
+        triggerSpotifyWrappedSync(track);
+        return;
+      } catch (swapErr) {
+        if (reqId !== playRequestIdRef.current) return;
+        console.warn('Standby deck fallback to direct load:', swapErr);
       }
     }
 
-    const studioUrl = getStudioServerUrl();
-    if (playSrc && playSrc.startsWith('/api') && studioUrl) {
-      playSrc = `${studioUrl}${playSrc}`;
+    // Standard Fast-Stream Path (backed by Server 256KB RAM Head-Chunk burst)
+    const { src: playSrc, isObjectUrl } = resolvePlaySrc(track);
+    if (!playSrc) {
+      setIsBuffering(false);
+      return;
+    }
+    if (isObjectUrl) {
+      activeBlobUrlRef.current = playSrc;
     }
 
-    audioRef.current.crossOrigin = 'anonymous';
-    audioRef.current.src = playSrc;
-    audioRef.current.volume = isMuted ? 0 : volume;
+    const activeDeck = audioRef.current;
+    activeDeck.pause();
+    activeDeck.muted = false;
+    activeDeck.preload = 'auto';
+    activeDeck.volume = isMuted ? 0 : volume;
+    activeDeck.src = playSrc;
+    setIsBuffering(true);
 
     try {
-      dspEngine.init(audioRef.current);
+      dspEngine.init(activeDeck);
+      dspEngine.setActiveElement(activeDeck);
       dspEngine.resume();
       // Keep imported lossless files free from the app's preset EQ curve.
       dspEngine.setEqEnabled(track.isLocalLossless ? false : isEqEnabled);
-      await audioRef.current.play();
+      await activeDeck.play();
+      if (reqId !== playRequestIdRef.current) return;
       if (startAtSeconds > 0 && audioRef.current) {
         audioRef.current.currentTime = Math.max(0, startAtSeconds - 0.5);
       }
@@ -560,6 +674,7 @@ export default function App() {
       setIsBuffering(false);
       triggerSpotifyWrappedSync(track);
     } catch (err) {
+      if (reqId !== playRequestIdRef.current) return;
       console.warn('Direct stream playback note:', err);
       setIsBuffering(false);
     }
@@ -572,6 +687,7 @@ export default function App() {
       return;
     }
     dspEngine.init(audioRef.current);
+    dspEngine.setActiveElement(audioRef.current);
     dspEngine.resume();
     if (isPlaying) {
       audioRef.current.pause();
@@ -726,6 +842,89 @@ export default function App() {
     return tracks;
   }, [activeView, likedTracks, offlineTracks, tracks]);
 
+  // Zero-Delay Queue Lookahead: Pre-warm upcoming neighbors & pre-decode next track in Standby Deck
+  useEffect(() => {
+    const activeList = activeDisplayedTracks.length ? activeDisplayedTracks : tracks;
+    if (!activeList.length) return;
+
+    const idx = activeList.findIndex((t) => t.id === currentTrack?.id);
+    if (idx === -1) {
+      apiPrewarmTracks(activeList.slice(0, 2), true);
+      apiPrewarmTracks(activeList.slice(2, 6), false);
+      if (!isPlaying && activeList[0]) {
+        preloadIntoStandbyDeck(activeList[0]);
+      }
+      return;
+    }
+
+    const immediateNext = activeList[idx + 1] || activeList[0];
+    const prevNeighbor = idx > 0 ? activeList[idx - 1] : activeList[activeList.length - 1];
+    const upcomingSlice = activeList.slice(idx + 1, idx + 5);
+
+    if (immediateNext && immediateNext.id !== currentTrack?.id) {
+      apiPrewarmTracks([immediateNext], true);
+      if (!isShuffle) {
+        preloadIntoStandbyDeck(immediateNext);
+      }
+    }
+    apiPrewarmTracks([...upcomingSlice.slice(1), prevNeighbor].filter(Boolean), false);
+
+    // Proactive Infinite Auto-Radio: extend queue 2 tracks BEFORE reaching queue end so Next never waits
+    if (
+      isAutoRadio &&
+      isPlaying &&
+      activeView === 'discover' &&
+      !isExtendingQueue &&
+      currentTrack &&
+      idx >= activeList.length - 3
+    ) {
+      setIsExtendingQueue(true);
+      apiGetRecommendations(currentTrack.artist, currentTrack.title, sourceMode)
+        .then((rec) => {
+          if (rec?.results?.length) {
+            setTracks((prev) => {
+              const existingIds = new Set(prev.map((t) => t.id));
+              const fresh = rec.results.filter((t) => !existingIds.has(t.id));
+              if (fresh.length) apiPrewarmTracks(fresh.slice(0, 4), false);
+              return fresh.length ? [...prev, ...fresh] : prev;
+            });
+          }
+        })
+        .catch(() => {})
+        .finally(() => setIsExtendingQueue(false));
+    }
+  }, [currentTrack?.id, activeDisplayedTracks, tracks, isPlaying, isShuffle, isAutoRadio, activeView, sourceMode]);
+
+  const handleDeckWaiting = (e) => {
+    if (e.currentTarget !== audioRef.current) return;
+    setIsBuffering(true);
+  };
+
+  const handleDeckPlaying = (e) => {
+    if (e.currentTarget !== audioRef.current) return;
+    setIsBuffering(false);
+    setIsPlaying(true);
+  };
+
+  const handleDeckTimeUpdate = (e) => {
+    if (e.currentTarget !== audioRef.current) return;
+    const el = e.currentTarget;
+    setProgress(el.currentTime);
+    if (el.duration && isFinite(el.duration)) {
+      setDuration(el.duration);
+    }
+  };
+
+  const handleDeckEnded = (e) => {
+    if (e.currentTarget !== audioRef.current) return;
+    if (isRepeat && audioRef.current) {
+      audioRef.current.currentTime = 0;
+      audioRef.current.play();
+    } else {
+      playNext();
+    }
+  };
+
   const accentBg = sourceMode === 'spotify' ? 'bg-[#1DB954] text-black' : 'bg-[#FF0033] text-white';
   const accentText = sourceMode === 'spotify' ? 'text-[#1DB954]' : 'text-[#FF0033]';
   const accentBar = sourceMode === 'spotify' ? 'bg-[#1DB954]' : 'bg-[#FF0033]';
@@ -751,30 +950,33 @@ export default function App() {
           : 'bg-black text-zinc-100 font-sans selection:bg-emerald-500 selection:text-black'
       } select-none overflow-hidden p-0 sm:p-2 sm:gap-2`}
     >
-      {/* Core HTML5 Audio Element */}
+      {/* Dual-Deck Zero-Latency HTML5 Audio Pipeline (Active Deck + Pre-Decoded Standby Deck) */}
       <audio
-        ref={audioRef}
-        onWaiting={() => setIsBuffering(true)}
-        onPlaying={() => {
-          setIsBuffering(false);
-          setIsPlaying(true);
+        ref={(el) => {
+          deckARef.current = el;
+          if (el && !audioRef.current) audioRef.current = el;
         }}
-        onTimeUpdate={() => {
-          if (audioRef.current) {
-            setProgress(audioRef.current.currentTime);
-            if (audioRef.current.duration && isFinite(audioRef.current.duration)) {
-              setDuration(audioRef.current.duration);
-            }
+        crossOrigin="anonymous"
+        preload="auto"
+        onWaiting={handleDeckWaiting}
+        onPlaying={handleDeckPlaying}
+        onTimeUpdate={handleDeckTimeUpdate}
+        onEnded={handleDeckEnded}
+      />
+      <audio
+        ref={(el) => {
+          deckBRef.current = el;
+          if (el && !standbyDeckRef.current) {
+            el.muted = true;
+            standbyDeckRef.current = el;
           }
         }}
-        onEnded={() => {
-          if (isRepeat && audioRef.current) {
-            audioRef.current.currentTime = 0;
-            audioRef.current.play();
-          } else {
-            playNext();
-          }
-        }}
+        crossOrigin="anonymous"
+        preload="auto"
+        onWaiting={handleDeckWaiting}
+        onPlaying={handleDeckPlaying}
+        onTimeUpdate={handleDeckTimeUpdate}
+        onEnded={handleDeckEnded}
       />
 
       {/* Subtle Floating Toast for Spotify Wrapped Scrobble */}
@@ -1978,6 +2180,9 @@ export default function App() {
                       return (
                         <div
                           key={track.id}
+                          onMouseEnter={() => handleTrackRowEnter(track)}
+                          onMouseLeave={handleTrackRowLeave}
+                          onPointerDown={() => handleTrackRowEnter(track)}
                           onClick={() => playTrack(track)}
                           className={`group grid grid-cols-[32px_1fr_auto] md:grid-cols-[36px_1.6fr_1fr_110px] items-center px-3 py-2 rounded-xl cursor-pointer transition-colors ${
                             isCurrent ? 'bg-white/[0.09]' : 'hover:bg-white/[0.05]'
@@ -2311,6 +2516,9 @@ export default function App() {
                       .map((nextTrack) => (
                         <div
                           key={nextTrack.id}
+                          onMouseEnter={() => handleTrackRowEnter(nextTrack)}
+                          onMouseLeave={handleTrackRowLeave}
+                          onPointerDown={() => handleTrackRowEnter(nextTrack)}
                           onClick={() => playTrack(nextTrack)}
                           className="flex items-center gap-2.5 p-2 rounded-xl hover:bg-white/[0.05] cursor-pointer transition-colors"
                         >

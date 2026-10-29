@@ -1,9 +1,10 @@
 import express from 'express';
 import cors from 'cors';
 import crypto from 'crypto';
-import { execFile } from 'child_process';
+import { execFile, execFileSync, spawn } from 'child_process';
 import { promisify } from 'util';
 import { Readable } from 'stream';
+import readline from 'readline';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -26,6 +27,9 @@ const PORT = 3001;
 // Official Spotify 2025/2026 compliant Loopback IP Redirect URI (no 'localhost' allowed by Spotify)
 const SPOTIFY_REDIRECT_URI = `http://127.0.0.1:${PORT}/api/spotify/callback`;
 const SESSION_FILE = path.join(__dirname, 'spotify-session.json');
+const DISK_CACHE_FILE = path.join(__dirname, '.stream-cache.json');
+const YT_CACHE_DIR = path.join(__dirname, '.ytcache');
+const YT_DAEMON_SCRIPT = path.join(__dirname, 'yt_daemon.py');
 
 app.use(cors());
 app.use(express.json());
@@ -36,11 +40,165 @@ const FFMPEG_CANDIDATES = [
   'ffmpeg'
 ];
 const FFMPEG_PATH = FFMPEG_CANDIDATES.find((p) => p === 'ffmpeg' || fs.existsSync(p)) || null;
+const STREAM_USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 
-// Stream URL caches
-const streamCache = new Map();
+// Zero-Latency Multi-Layer Stream Caches
+const HEAD_CHUNK_BYTES = 262144; // First 256 KB (~13s of Opus 48kHz audio) buffered in RAM
+const MAX_HEAD_CACHE_ENTRIES = 48;
+const streamCache = new Map();     // key -> { url, videoId, mime, expiresAt }
+const artTrackCache = new Map();   // cleanQueryLower -> { videoId, expiresAt }
+const headChunkCache = new Map();  // key -> { buffer, totalLength, contentType, url, expiresAt }
 const pendingResolves = new Map();
+const pendingHeadWarms = new Map();
 let wrappedSyncLogs = [];
+let diskSaveTimer = null;
+
+// Load persisted stream & Studio Art Track ID caches from disk on startup
+if (fs.existsSync(DISK_CACHE_FILE)) {
+  try {
+    const raw = JSON.parse(fs.readFileSync(DISK_CACHE_FILE, 'utf-8'));
+    const now = Date.now();
+    for (const [k, v] of Object.entries(raw.streams || {})) {
+      if (v?.url && v.expiresAt > now + 60000) {
+        streamCache.set(k, v);
+      }
+    }
+    for (const [k, v] of Object.entries(raw.artTracks || {})) {
+      if (v?.videoId && v.expiresAt > now) {
+        artTrackCache.set(k, v);
+      }
+    }
+  } catch {}
+}
+
+function scheduleDiskCacheSave() {
+  if (diskSaveTimer) return;
+  diskSaveTimer = setTimeout(() => {
+    diskSaveTimer = null;
+    const now = Date.now();
+    const streams = {};
+    let count = 0;
+    for (const [k, v] of streamCache.entries()) {
+      if (v?.url && v.expiresAt > now + 60000 && count < 400) {
+        streams[k] = v;
+        count++;
+      }
+    }
+    const artTracks = {};
+    let atvCount = 0;
+    for (const [k, v] of artTrackCache.entries()) {
+      if (v?.videoId && v.expiresAt > now && atvCount < 800) {
+        artTracks[k] = v;
+        atvCount++;
+      }
+    }
+    fs.promises
+      .writeFile(DISK_CACHE_FILE, JSON.stringify({ streams, artTracks }))
+      .catch(() => {});
+  }, 1500);
+}
+
+/* ==================== PERSISTENT WARM YT-DLP DAEMON ==================== */
+function detectPythonWithYtDlp() {
+  const candidates = [
+    path.join(os.homedir(), 'AppData', 'Local', 'Python', 'pythoncore-3.14-64', 'python.exe'),
+    'py',
+    'python',
+    'python3'
+  ];
+  for (const bin of candidates) {
+    if (bin.includes(path.sep) && !fs.existsSync(bin)) continue;
+    try {
+      const out = execFileSync(bin, ['-c', 'import yt_dlp, sys; print(sys.executable)'], {
+        encoding: 'utf-8',
+        timeout: 3500,
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'ignore']
+      }).trim();
+      if (out) return out.split(/\r?\n/).pop().trim();
+    } catch {}
+  }
+  return null;
+}
+
+const PYTHON_YTDLP_BIN = fs.existsSync(YT_DAEMON_SCRIPT) ? detectPythonWithYtDlp() : null;
+let ytDaemonProc = null;
+let ytDaemonReqSeq = 0;
+const ytDaemonPending = new Map();
+
+function startYtDaemon() {
+  if (!PYTHON_YTDLP_BIN || ytDaemonProc) return;
+  try {
+    const proc = spawn(PYTHON_YTDLP_BIN, ['-u', YT_DAEMON_SCRIPT], {
+      env: {
+        ...process.env,
+        AURA_YT_CACHE_DIR: YT_CACHE_DIR,
+        AURA_NODE_PATH: process.execPath
+      },
+      windowsHide: true,
+      stdio: ['pipe', 'pipe', 'ignore']
+    });
+    ytDaemonProc = proc;
+
+    const rl = readline.createInterface({ input: proc.stdout });
+    rl.on('line', (line) => {
+      try {
+        const msg = JSON.parse(line);
+        if (msg.id && ytDaemonPending.has(msg.id)) {
+          const entry = ytDaemonPending.get(msg.id);
+          clearTimeout(entry.timer);
+          ytDaemonPending.delete(msg.id);
+          entry.resolve(msg);
+        }
+      } catch {}
+    });
+
+    proc.on('exit', () => {
+      ytDaemonProc = null;
+      for (const [, entry] of ytDaemonPending.entries()) {
+        clearTimeout(entry.timer);
+        entry.resolve({ ok: false, error: 'daemon_restarted' });
+      }
+      ytDaemonPending.clear();
+      setTimeout(startYtDaemon, 1000);
+    });
+  } catch {
+    ytDaemonProc = null;
+  }
+}
+
+function resolveViaDaemon(targetArg) {
+  if (!PYTHON_YTDLP_BIN) return Promise.resolve(null);
+  if (!ytDaemonProc) startYtDaemon();
+  if (!ytDaemonProc?.stdin?.writable) return Promise.resolve(null);
+
+  return new Promise((resolve) => {
+    const id = ++ytDaemonReqSeq;
+    const timer = setTimeout(() => {
+      ytDaemonPending.delete(id);
+      resolve(null);
+    }, 16000);
+
+    ytDaemonPending.set(id, {
+      timer,
+      resolve: (msg) => resolve(msg?.ok && msg.url ? msg : null)
+    });
+
+    try {
+      ytDaemonProc.stdin.write(`${JSON.stringify({ id, target: targetArg })}\n`);
+    } catch {
+      clearTimeout(timer);
+      ytDaemonPending.delete(id);
+      resolve(null);
+    }
+  });
+}
+
+startYtDaemon();
+process.on('exit', () => {
+  try { ytDaemonProc?.kill(); } catch {}
+});
 
 /* ==================== SPOTIFY OAUTH 2.0 PKCE ENGINE ==================== */
 let spotifySession = {
@@ -320,10 +478,15 @@ app.get('/api/spotify/playlist/:playlistId', async (req, res) => {
         };
       });
 
-    // Pre-warm first track in background
-    if (results[0]?.searchStreamQuery) {
-      resolveFullStreamUrl('', results[0].previewUrl, results[0].searchStreamQuery).catch(() => {});
-    }
+    // Pre-warm top 8 playlist tracks (URL + 256KB RAM head-chunk) in background
+    enqueuePrewarm(
+      results.slice(0, 8).map((t) => ({
+        videoId: t.ytVideoId || '',
+        q: t.searchStreamQuery || '',
+        fallback: t.previewUrl || ''
+      })),
+      true
+    );
 
     res.json({ count: results.length, results });
   } catch (err) {
@@ -340,15 +503,44 @@ function parseDurationToSeconds(text) {
   return 215;
 }
 
+function parseUrlExpiryMs(directUrl) {
+  try {
+    const exp = new URL(directUrl).searchParams.get('expire');
+    if (exp) {
+      const ms = parseInt(exp, 10) * 1000 - 15 * 60 * 1000;
+      if (ms > Date.now() + 5 * 60 * 1000) return ms;
+    }
+  } catch {}
+  return Date.now() + 2 * 60 * 60 * 1000;
+}
+
+function getStreamCacheKey(videoId = '', searchQuery = '') {
+  if (videoId) return videoId.trim();
+  if (searchQuery) return `q:${searchQuery.trim().toLowerCase()}`;
+  return '';
+}
+
+function evictCachedTrack(videoId = '', searchQuery = '') {
+  const k1 = getStreamCacheKey(videoId, searchQuery);
+  const k2 = searchQuery ? getStreamCacheKey('', searchQuery) : '';
+  for (const k of [k1, k2, videoId].filter(Boolean)) {
+    const existing = streamCache.get(k);
+    if (existing?.videoId) {
+      streamCache.delete(existing.videoId);
+      headChunkCache.delete(existing.videoId);
+    }
+    streamCache.delete(k);
+    headChunkCache.delete(k);
+  }
+}
+
 async function searchYouTubeMusic(query) {
   try {
     const res = await fetch(
       `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&hl=en`,
       {
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
-        }
+        headers: { 'User-Agent': STREAM_USER_AGENT },
+        signal: AbortSignal.timeout(4500)
       }
     );
     const html = await res.text();
@@ -403,13 +595,18 @@ async function findStudioArtTrackId(rawQuery = '') {
     return null;
   }
 
+  const atvKey = cleanQuery.toLowerCase();
+  const cachedAtv = artTrackCache.get(atvKey);
+  if (cachedAtv && cachedAtv.expiresAt > Date.now()) {
+    return cachedAtv.videoId;
+  }
+
   try {
     const res = await fetch('https://music.youtube.com/youtubei/v1/search?prettyPrint=false', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
+        'User-Agent': STREAM_USER_AGENT
       },
       body: JSON.stringify({
         context: {
@@ -424,26 +621,36 @@ async function findStudioArtTrackId(rawQuery = '') {
         // Official YTM "Songs" filter -> returns label-supplied Studio Art Tracks (ATV)
         params: 'EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D'
       }),
-      signal: AbortSignal.timeout(3200)
+      signal: AbortSignal.timeout(2800)
     });
     if (!res.ok) return null;
     const payload = JSON.stringify(await res.json());
     const match = payload.match(/"videoId":"([a-zA-Z0-9_-]{11})"/);
-    return match ? match[1] : null;
+    if (match?.[1]) {
+      artTrackCache.set(atvKey, {
+        videoId: match[1],
+        expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000
+      });
+      scheduleDiskCacheSave();
+      return match[1];
+    }
+    return null;
   } catch {
     return null;
   }
 }
 
-async function resolveFullStreamUrl(videoId = '', fallbackUrl = '', searchQuery = '') {
-  if (!fs.existsSync(YT_DLP_PATH)) return fallbackUrl;
-
-  const cacheKey = videoId || (searchQuery ? `q:${searchQuery}` : '');
+async function resolveFullStreamUrl(videoId = '', fallbackUrl = '', searchQuery = '', forceRefresh = false) {
+  const cacheKey = getStreamCacheKey(videoId, searchQuery);
   if (!cacheKey) return fallbackUrl;
 
-  const cached = streamCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached.url;
+  if (forceRefresh) {
+    evictCachedTrack(videoId, searchQuery);
+  } else {
+    const cached = streamCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.url;
+    }
   }
 
   if (pendingResolves.has(cacheKey)) {
@@ -455,35 +662,79 @@ async function resolveFullStreamUrl(videoId = '', fallbackUrl = '', searchQuery 
       let resolvedVideoId = videoId;
       if (!resolvedVideoId && searchQuery) {
         resolvedVideoId = (await findStudioArtTrackId(searchQuery)) || '';
+        if (resolvedVideoId && !forceRefresh) {
+          const byId = streamCache.get(resolvedVideoId);
+          if (byId && byId.expiresAt > Date.now()) {
+            streamCache.set(cacheKey, byId);
+            const warmHead = headChunkCache.get(resolvedVideoId);
+            if (warmHead) headChunkCache.set(cacheKey, warmHead);
+            return byId.url;
+          }
+        }
       }
 
       const targetArg = resolvedVideoId
         ? `https://www.youtube.com/watch?v=${resolvedVideoId}`
         : `ytsearch1:${searchQuery}`;
 
-      const { stdout } = await execFileAsync(
-        YT_DLP_PATH,
-        [
-          '--js-runtimes',
-          `node:${process.execPath}`,
-          '-f',
-          '251/ba[acodec=opus][protocol=https]/140/ba[protocol=https]/ba/bestaudio',
-          '--no-playlist',
-          '--no-warnings',
-          '-g',
-          targetArg
-        ],
-        { timeout: 18000 }
-      );
-      const lines = stdout.trim().split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-      const directUrl =
-        lines.find((l) => l.startsWith('http') && !l.includes('.m3u8')) ||
-        lines.find((l) => l.startsWith('http'));
+      // Tier 1: Persistent Warm Multi-Thread Python YoutubeDL Daemon (~1s cold via visionos, 0ms ad-wait)
+      let directUrl = '';
+      let mime = 'audio/webm';
+      let userAgent = STREAM_USER_AGENT;
+      let availableAtMs = 0;
+      const daemonResult = await resolveViaDaemon(targetArg);
+      if (daemonResult?.url) {
+        directUrl = daemonResult.url;
+        mime = daemonResult.mime || mime;
+        if (daemonResult.userAgent) userAgent = daemonResult.userAgent;
+        if (daemonResult.availableAt) availableAtMs = daemonResult.availableAt * 1000;
+        if (!resolvedVideoId && daemonResult.videoId) {
+          resolvedVideoId = daemonResult.videoId;
+        }
+      }
+
+      // Tier 2: Standalone yt-dlp.exe binary fallback
+      if (!directUrl && fs.existsSync(YT_DLP_PATH)) {
+        const { stdout } = await execFileAsync(
+          YT_DLP_PATH,
+          [
+            '--cache-dir',
+            YT_CACHE_DIR,
+            '--js-runtimes',
+            `node:${process.execPath}`,
+            '--extractor-args',
+            'youtube:player_client=visionos,tv_samsung;player_skip=hls,dash',
+            '-f',
+            '251/ba[acodec=opus][protocol=https]/140/ba[protocol=https]/ba/bestaudio',
+            '--no-playlist',
+            '--no-warnings',
+            '-g',
+            targetArg
+          ],
+          { timeout: 18000, windowsHide: true }
+        );
+        const lines = stdout.trim().split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+        directUrl =
+          lines.find((l) => l.startsWith('http') && !l.includes('.m3u8')) ||
+          lines.find((l) => l.startsWith('http')) ||
+          '';
+      }
+
       if (directUrl && directUrl.startsWith('http')) {
-        streamCache.set(cacheKey, {
+        const expiresAt = parseUrlExpiryMs(directUrl);
+        const entry = {
           url: directUrl,
-          expiresAt: Date.now() + 2 * 60 * 60 * 1000
-        });
+          videoId: resolvedVideoId || '',
+          mime,
+          userAgent,
+          availableAtMs,
+          expiresAt
+        };
+        streamCache.set(cacheKey, entry);
+        if (resolvedVideoId) {
+          streamCache.set(resolvedVideoId, entry);
+        }
+        scheduleDiskCacheSave();
         return directUrl;
       }
       return fallbackUrl;
@@ -498,6 +749,175 @@ async function resolveFullStreamUrl(videoId = '', fallbackUrl = '', searchQuery 
   return promise;
 }
 
+async function waitUntilAvailable(cacheKey) {
+  const meta = cacheKey ? streamCache.get(cacheKey) : null;
+  if (meta?.availableAtMs && meta.availableAtMs > Date.now()) {
+    const waitMs = Math.min(8000, meta.availableAtMs - Date.now() + 250);
+    await new Promise((r) => setTimeout(r, waitMs));
+  }
+  return meta;
+}
+
+/**
+ * Buffers the opening 256 KB (~13s of Opus 48kHz audio) into RAM so HTML5 <audio>
+ * receives playable audio frames in <2ms on click/skip while upstream splices seamlessly.
+ */
+function setHeadCacheEntry(keys, entry) {
+  for (const k of keys.filter(Boolean)) {
+    if (headChunkCache.has(k)) headChunkCache.delete(k);
+    headChunkCache.set(k, entry);
+  }
+  while (headChunkCache.size > MAX_HEAD_CACHE_ENTRIES * 2) {
+    const oldestKey = headChunkCache.keys().next().value;
+    if (!oldestKey) break;
+    headChunkCache.delete(oldestKey);
+  }
+}
+
+async function warmHeadChunk(videoId = '', fallbackUrl = '', searchQuery = '') {
+  const cacheKey = getStreamCacheKey(videoId, searchQuery);
+  if (!cacheKey) return null;
+
+  const existingHead = headChunkCache.get(cacheKey);
+  if (existingHead && existingHead.expiresAt > Date.now() + 60000) {
+    return existingHead;
+  }
+
+  if (pendingHeadWarms.has(cacheKey)) {
+    return pendingHeadWarms.get(cacheKey);
+  }
+
+  const job = (async () => {
+    try {
+      let targetUrl = await resolveFullStreamUrl(videoId, fallbackUrl, searchQuery, false);
+      if (!targetUrl) return null;
+
+      let meta = await waitUntilAvailable(cacheKey);
+      let ua = meta?.userAgent || STREAM_USER_AGENT;
+
+      let upstream = await fetch(targetUrl, {
+        headers: {
+          'User-Agent': ua,
+          Range: `bytes=0-${HEAD_CHUNK_BYTES - 1}`
+        },
+        signal: AbortSignal.timeout(7000)
+      });
+
+      // Self-heal if cached Googlevideo URL bound to an older IP/session returned 403
+      if (upstream.status === 403 || upstream.status === 401) {
+        try { upstream.body?.cancel?.(); } catch {}
+        targetUrl = await resolveFullStreamUrl(videoId, fallbackUrl, searchQuery, true);
+        if (!targetUrl) return null;
+        meta = await waitUntilAvailable(cacheKey);
+        ua = meta?.userAgent || STREAM_USER_AGENT;
+        upstream = await fetch(targetUrl, {
+          headers: {
+            'User-Agent': ua,
+            Range: `bytes=0-${HEAD_CHUNK_BYTES - 1}`
+          },
+          signal: AbortSignal.timeout(7000)
+        });
+      }
+
+      if (upstream.status !== 206 && upstream.status !== 200) {
+        try { upstream.body?.cancel?.(); } catch {}
+        return null;
+      }
+
+      const contentType = upstream.headers.get('content-type') || 'audio/webm';
+      const contentRange = upstream.headers.get('content-range') || '';
+      const rangeMatch = contentRange.match(/\/(\d+)$/);
+      const buffer = Buffer.from(await upstream.arrayBuffer());
+
+      let totalLength = rangeMatch ? parseInt(rangeMatch[1], 10) : 0;
+      if (!totalLength && upstream.status === 200) {
+        totalLength = buffer.length;
+      }
+      if (!totalLength || !buffer.length) return null;
+
+      const entry = {
+        buffer,
+        totalLength,
+        contentType,
+        url: targetUrl,
+        userAgent: ua,
+        expiresAt: meta?.expiresAt || parseUrlExpiryMs(targetUrl)
+      };
+      setHeadCacheEntry([cacheKey, videoId, meta?.videoId], entry);
+      return entry;
+    } catch {
+      return null;
+    } finally {
+      pendingHeadWarms.delete(cacheKey);
+    }
+  })();
+
+  pendingHeadWarms.set(cacheKey, job);
+  return job;
+}
+
+/* ==================== BOUNDED PRIORITY PRE-WARM SCHEDULER ==================== */
+const MAX_PREWARM_CONCURRENCY = 3;
+let activePrewarmWorkers = 0;
+const prewarmQueue = [];
+const prewarmQueuedKeys = new Set();
+
+function drainPrewarmQueue() {
+  while (activePrewarmWorkers < MAX_PREWARM_CONCURRENCY && prewarmQueue.length > 0) {
+    const item = prewarmQueue.shift();
+    if (!item) break;
+    prewarmQueuedKeys.delete(item.key);
+    activePrewarmWorkers++;
+    warmHeadChunk(item.videoId, item.fallback, item.q)
+      .catch(() => {})
+      .finally(() => {
+        activePrewarmWorkers--;
+        drainPrewarmQueue();
+      });
+  }
+}
+
+function enqueuePrewarm(items = [], urgent = false) {
+  let added = 0;
+  const normalized = [];
+  for (const raw of items) {
+    if (!raw) continue;
+    const videoId = (raw.videoId || raw.ytVideoId || '').trim();
+    const q = (raw.q || raw.searchStreamQuery || '').trim();
+    const fallback = (raw.fallback || raw.previewUrl || '').trim();
+    const key = getStreamCacheKey(videoId, q);
+    if (!key) continue;
+
+    const readyHead = headChunkCache.get(key);
+    if (readyHead && readyHead.expiresAt > Date.now() + 60000) continue;
+    if (prewarmQueuedKeys.has(key)) continue;
+
+    prewarmQueuedKeys.add(key);
+    normalized.push({ key, videoId, q, fallback });
+    added++;
+  }
+
+  if (urgent) {
+    prewarmQueue.unshift(...normalized);
+  } else {
+    prewarmQueue.push(...normalized);
+  }
+  // Cap backlog so old scroll/search prewarms never starve fresh views
+  while (prewarmQueue.length > 24) {
+    const dropped = prewarmQueue.pop();
+    if (dropped) prewarmQueuedKeys.delete(dropped.key);
+  }
+  drainPrewarmQueue();
+  return added;
+}
+
+app.post('/api/prewarm', (req, res) => {
+  const tracks = Array.isArray(req.body?.tracks) ? req.body.tracks : [];
+  const urgent = Boolean(req.body?.urgent);
+  const queued = enqueuePrewarm(tracks.slice(0, 10), urgent);
+  res.json({ ok: true, queued });
+});
+
 /**
  * Smart Lyric-Aware & Fuzzy Dual-Engine Search
  * Matches Song Title, Artist, Album, Typos, AND Partial Song Lyrics (with exact timestamp!)
@@ -506,10 +926,11 @@ app.get('/api/search', async (req, res) => {
   try {
     const query = (req.query.q || 'Tulus').trim();
     const mode = req.query.mode || 'spotify';
+    const fastMode = req.query.fast === '1';
     const token = await getValidSpotifyToken();
 
     const words = query.split(/\s+/).filter(Boolean);
-    const shouldProbeLyrics = words.length >= 2;
+    const shouldProbeLyrics = !fastMode && words.length >= 2;
     const ytMainQuery = mode === 'ytmusic' ? `${query} audio` : `${query} official audio`;
 
     // WAVE 1: Parallel Direct Catalog + YouTube Audio + Neural Lyric Video Index
@@ -517,12 +938,14 @@ app.get('/api/search', async (req, res) => {
       token
         ? fetch(
             `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=14`,
-            { headers: { Authorization: `Bearer ${token}` } }
+            { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(3500) }
           )
             .then((r) => r.json())
             .catch(() => null)
         : Promise.resolve(null),
-      fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=14`)
+      fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=14`, {
+        signal: AbortSignal.timeout(3500)
+      })
         .then((r) => r.json())
         .catch(() => ({ results: [] })),
       searchYouTubeMusic(ytMainQuery),
@@ -793,12 +1216,23 @@ app.get('/api/search', async (req, res) => {
       if (deduped.length >= 20) break;
     }
 
-    // Background pre-warm top 2 ranked tracks for instant playback!
-    deduped.slice(0, 2).forEach((t) => {
-      resolveFullStreamUrl(t.ytVideoId || '', t.previewUrl || '', t.searchStreamQuery || '').catch(
-        () => {}
-      );
-    });
+    // Background pre-warm top 8 ranked tracks (URL + 256KB RAM head-chunk) for instant zero-delay playback!
+    enqueuePrewarm(
+      deduped.slice(0, 2).map((t) => ({
+        videoId: t.ytVideoId || '',
+        q: t.searchStreamQuery || '',
+        fallback: t.previewUrl || ''
+      })),
+      true
+    );
+    enqueuePrewarm(
+      deduped.slice(2, 8).map((t) => ({
+        videoId: t.ytVideoId || '',
+        q: t.searchStreamQuery || '',
+        fallback: t.previewUrl || ''
+      })),
+      false
+    );
 
     res.json({
       query,
@@ -871,8 +1305,8 @@ app.get('/api/recommendations', async (req, res) => {
     const selected = shuffled.slice(0, 2);
     const recSearchQuery = `${selected.join(' ')} popular hits`;
 
-    // Internal fetch to our search endpoint
-    const internalUrl = `http://127.0.0.1:${PORT}/api/search?q=${encodeURIComponent(recSearchQuery)}&mode=${mode}`;
+    // Fast internal search (skips slow lyric-probing Wave 2)
+    const internalUrl = `http://127.0.0.1:${PORT}/api/search?q=${encodeURIComponent(recSearchQuery)}&mode=${mode}&fast=1`;
     const searchRes = await fetch(internalUrl);
     const data = await searchRes.json();
 
@@ -883,13 +1317,23 @@ app.get('/api/recommendations', async (req, res) => {
       return true;
     });
 
+    const finalResults = cleanResults.slice(0, 14);
+    enqueuePrewarm(
+      finalResults.slice(0, 6).map((t) => ({
+        videoId: t.ytVideoId || '',
+        q: t.searchStreamQuery || '',
+        fallback: t.previewUrl || ''
+      })),
+      false
+    );
+
     res.json({
       success: true,
       seedArtist: artist,
       seedTitle: title,
       clusterFound: selected,
-      count: cleanResults.length,
-      results: cleanResults.slice(0, 14)
+      count: finalResults.length,
+      results: finalResults
     });
   } catch (err) {
     console.error('Recommendations error:', err);
@@ -898,24 +1342,150 @@ app.get('/api/recommendations', async (req, res) => {
 });
 
 app.get('/api/stream', async (req, res) => {
-  try {
-    const { videoId, fallback, q } = req.query;
-    const targetUrl = await resolveFullStreamUrl(videoId || '', fallback || '', q || '');
+  const abortController = new AbortController();
+  let activeNodeStream = null;
 
+  res.on('close', () => {
+    if (!res.writableEnded) {
+      abortController.abort();
+      if (activeNodeStream) activeNodeStream.destroy();
+    }
+  });
+
+  const setCommonStreamHeaders = () => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader(
+      'Access-Control-Expose-Headers',
+      'Content-Length, Content-Range, Accept-Ranges, Content-Type'
+    );
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+  };
+
+  try {
+    const { videoId = '', fallback = '', q = '' } = req.query;
+    const cacheKey = getStreamCacheKey(videoId, q);
+    const rawRange = req.headers.range;
+
+    // FAST PATH: Serve opening 256 KB (~13s of Opus audio) directly from RAM in <2ms,
+    // then splice remaining bytes from Googlevideo seamlessly!
+    const head = cacheKey ? headChunkCache.get(cacheKey) : null;
+    if (
+      head &&
+      head.expiresAt > Date.now() &&
+      head.totalLength > 0 &&
+      head.buffer?.length > 0
+    ) {
+      const N = head.buffer.length;
+      const total = head.totalLength;
+      const rangeMatch = rawRange ? /^bytes=(\d+)-(\d*)$/.exec(rawRange.trim()) : null;
+
+      const fetchTailStream = async (tailStart, tailEnd) => {
+        let tailRes = await fetch(head.url, {
+          headers: {
+            'User-Agent': head.userAgent || STREAM_USER_AGENT,
+            Range: `bytes=${tailStart}-${tailEnd}`
+          },
+          signal: abortController.signal
+        });
+        if (tailRes.status === 403 || tailRes.status === 401) {
+          try { tailRes.body?.cancel?.(); } catch {}
+          const freshUrl = await resolveFullStreamUrl(videoId, fallback, q, true);
+          if (!freshUrl) return null;
+          const freshMeta = await waitUntilAvailable(cacheKey);
+          tailRes = await fetch(freshUrl, {
+            headers: {
+              'User-Agent': freshMeta?.userAgent || STREAM_USER_AGENT,
+              Range: `bytes=${tailStart}-${tailEnd}`
+            },
+            signal: abortController.signal
+          });
+        }
+        return tailRes;
+      };
+
+      // Subcase A: Full GET (no Range header)
+      if (!rawRange) {
+        res.status(200);
+        setCommonStreamHeaders();
+        res.setHeader('Content-Type', head.contentType);
+        res.setHeader('Content-Length', total);
+        if (N >= total) {
+          return res.end(head.buffer);
+        }
+        const tailPromise = fetchTailStream(N, total - 1);
+        res.write(head.buffer);
+        const tailRes = await tailPromise;
+        if (!tailRes?.body || tailRes.status !== 206) return res.end();
+        activeNodeStream = Readable.fromWeb(tailRes.body);
+        activeNodeStream.on('error', () => res.end());
+        return activeNodeStream.pipe(res);
+      }
+
+      if (rangeMatch) {
+        const start = parseInt(rangeMatch[1], 10);
+        const hasEnd = rangeMatch[2] !== '';
+        const end = hasEnd ? Math.min(parseInt(rangeMatch[2], 10), total - 1) : total - 1;
+
+        // Subcase B: Open-ended Range from byte 0 ("Range: bytes=0-") -> Instant RAM burst + splice!
+        if (start === 0 && !hasEnd) {
+          res.status(206);
+          setCommonStreamHeaders();
+          res.setHeader('Content-Type', head.contentType);
+          res.setHeader('Content-Range', `bytes 0-${total - 1}/${total}`);
+          res.setHeader('Content-Length', total);
+          if (N >= total) {
+            return res.end(head.buffer);
+          }
+          const tailPromise = fetchTailStream(N, total - 1);
+          res.write(head.buffer);
+          const tailRes = await tailPromise;
+          if (!tailRes?.body || tailRes.status !== 206) return res.end();
+          activeNodeStream = Readable.fromWeb(tailRes.body);
+          activeNodeStream.on('error', () => res.end());
+          return activeNodeStream.pipe(res);
+        }
+
+        // Subcase C: Range completely inside RAM head buffer -> 0.1ms pure memory slice!
+        if (start >= 0 && end >= start && end < N) {
+          const slice = head.buffer.subarray(start, end + 1);
+          res.status(206);
+          setCommonStreamHeaders();
+          res.setHeader('Content-Type', head.contentType);
+          res.setHeader('Content-Range', `bytes ${start}-${end}/${total}`);
+          res.setHeader('Content-Length', slice.length);
+          return res.end(slice);
+        }
+      }
+    }
+
+    // STANDARD / SEEK PATH (with automatic 403 stale-URL self-healing)
+    let targetUrl = await resolveFullStreamUrl(videoId, fallback, q, false);
     if (!targetUrl) {
       return res.status(404).send('Audio stream not found');
     }
 
-    const headers = {
-      'User-Agent':
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
-    };
-    if (req.headers.range) headers.Range = req.headers.range;
+    let meta = await waitUntilAvailable(cacheKey);
+    const headers = { 'User-Agent': meta?.userAgent || STREAM_USER_AGENT };
+    if (rawRange) headers.Range = rawRange;
 
-    const upstream = await fetch(targetUrl, { headers });
+    let upstream = await fetch(targetUrl, { headers, signal: abortController.signal });
+    if (upstream.status === 403 || upstream.status === 401) {
+      try { upstream.body?.cancel?.(); } catch {}
+      targetUrl = await resolveFullStreamUrl(videoId, fallback, q, true);
+      if (!targetUrl) return res.status(404).send('Audio stream not found');
+      meta = await waitUntilAvailable(cacheKey);
+      headers['User-Agent'] = meta?.userAgent || STREAM_USER_AGENT;
+      upstream = await fetch(targetUrl, { headers, signal: abortController.signal });
+    }
+
+    // Warm the RAM head-chunk asynchronously for instant rewinds/replays
+    if (cacheKey && !headChunkCache.has(cacheKey)) {
+      warmHeadChunk(videoId, fallback, q).catch(() => {});
+    }
+
     res.status(upstream.status);
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Accept-Ranges', 'bytes');
+    setCommonStreamHeaders();
 
     ['content-type', 'content-length', 'content-range'].forEach((h) => {
       const val = upstream.headers.get(h);
@@ -924,15 +1494,16 @@ app.get('/api/stream', async (req, res) => {
 
     if (!upstream.body) return res.end();
 
-    const nodeStream = Readable.fromWeb(upstream.body);
-    nodeStream.on('error', () => {
+    activeNodeStream = Readable.fromWeb(upstream.body);
+    activeNodeStream.on('error', () => {
       if (!res.headersSent) res.status(500).end();
       else res.end();
     });
-    req.on('close', () => nodeStream.destroy());
-    nodeStream.pipe(res);
+    activeNodeStream.pipe(res);
   } catch (err) {
+    if (err?.name === 'AbortError') return;
     if (!res.headersSent) res.status(500).json({ error: err.message });
+    else res.end();
   }
 });
 

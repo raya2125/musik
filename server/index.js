@@ -1248,76 +1248,143 @@ app.get('/api/search', async (req, res) => {
 });
 
 /**
+ * InnerTube YouTube Music Dynamic Radio Engine
+ * Fetches 50 real-time algorithmic radio tracks seeded by videoId
+ */
+async function fetchInnerTubeRadio(videoId) {
+  if (!videoId) return [];
+  try {
+    const res = await fetch('https://music.youtube.com/youtubei/v1/next?prettyPrint=false', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': STREAM_USER_AGENT
+      },
+      body: JSON.stringify({
+        context: {
+          client: {
+            clientName: 'WEB_REMIX',
+            clientVersion: '1.20240101.01.00',
+            hl: 'en'
+          }
+        },
+        videoId: videoId,
+        playlistId: 'RDAMVM' + videoId,
+        isAudioOnly: true
+      }),
+      signal: AbortSignal.timeout(5000)
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    const tabs =
+      data?.contents?.singleColumnMusicWatchNextResultsRenderer?.tabbedRenderer?.watchNextTabbedResultsRenderer?.tabs;
+    const contents =
+      tabs?.[0]?.tabRenderer?.content?.musicQueueRenderer?.content?.playlistPanelRenderer?.contents || [];
+
+    const results = [];
+    for (const item of contents) {
+      const v = item.playlistPanelVideoRenderer;
+      if (!v || !v.videoId) continue;
+      const title = v.title?.runs?.[0]?.text || '';
+      const artist =
+        v.longBylineText?.runs?.[0]?.text || v.shortBylineText?.runs?.[0]?.text || 'Artis';
+      const durationText = v.lengthText?.runs?.[0]?.text || '3:30';
+      const seconds = parseDurationToSeconds(durationText);
+      const thumbs = v.thumbnail?.thumbnails || [];
+      const cover =
+        thumbs.length ? thumbs[thumbs.length - 1].url : `https://i.ytimg.com/vi/${v.videoId}/hqdefault.jpg`;
+
+      results.push({
+        id: `yt_${v.videoId}`,
+        spotifyUri: `spotify:track:yt_${v.videoId}`,
+        ytVideoId: v.videoId,
+        searchStreamQuery: `${artist} - ${title}`,
+        title,
+        artist,
+        album: 'Single / Radio Mix',
+        duration: seconds || 215,
+        cover,
+        audioUrl: `/api/stream?videoId=${encodeURIComponent(v.videoId)}`,
+        previewUrl: '',
+        isLossless: false,
+        bitrate: 'Opus 160kbps High'
+      });
+    }
+    return results;
+  } catch (err) {
+    console.warn('InnerTube radio warning:', err.message);
+    return [];
+  }
+}
+
+/**
  * GET /api/recommendations
- * Smart Infinite Auto-Play / Radio Engine
+ * Real Algorithmic Song Radio & Dynamic Recommendation Engine
+ * Powered by YouTube Music InnerTube Next + Dynamic Catalog Search
  * Parameters:
- *   artist: Current playing artist
- *   title: Current playing track title
+ *   videoId: Specific YouTube video ID (fastest, direct InnerTube Radio)
+ *   artist: Current playing / searched artist
+ *   title: Current playing / searched track title
+ *   q: Raw search query seed
  *   mode: 'spotify' | 'ytmusic'
- * Returns high-view, related, non-chaotic songs to continuously expand the queue!
+ *   shuffle: '1' | '0'
  */
 app.get('/api/recommendations', async (req, res) => {
   try {
-    const artist = (req.query.artist || 'Tulus').trim();
+    let videoId = (req.query.videoId || '').trim();
+    const artist = (req.query.artist || '').trim();
     const title = (req.query.title || '').trim();
+    const rawQ = (req.query.q || '').trim();
     const mode = req.query.mode || 'spotify';
+    const shouldShuffle = req.query.shuffle === '1';
 
-    const clusters = {
-      indoPop: [
-        'Tulus', 'Mahalini', 'Bernadya', 'Hindia', 'Nadin Amizah',
-        'Tiara Andini', 'Sal Priadi', 'Yura Yunita', 'Juicy Luicy',
-        'Feby Putri', 'Pamungkas', 'Anggi Marito', 'Fabio Asher',
-        'Rizky Febian', 'Budi Doremi', 'Idgitaf'
-      ],
-      remix: [
-        'Febri remix', 'DJ Opus', 'DJ Desa', 'DJ Komang', 'DJ BonBon',
-        'Alok', 'Alan Walker', 'Marshmello', 'DJ TikTok Viral'
-      ],
-      westPop: [
-        'The Weeknd', 'Joji', 'Daniel Caesar', 'SZA', 'Frank Ocean',
-        'Bruno Mars', 'Keshi', 'Lauv', 'Jeremy Zucker', 'Post Malone',
-        'Billie Eilish'
-      ],
-      indoRock: [
-        'Sheila On 7', 'Dewa 19', 'Peterpan', 'Noah', 'Padi',
-        'Ungu', 'Fourtwnty', 'Payung Teduh'
-      ]
-    };
+    let radioTracks = [];
 
-    const artistLower = artist.toLowerCase();
-    let cluster = clusters.indoPop;
-    if (
-      artistLower.includes('remix') ||
-      artistLower.includes('dj') ||
-      artistLower.includes('bass') ||
-      artistLower.includes('febri')
-    ) {
-      cluster = clusters.remix;
-    } else if (clusters.westPop.some((a) => artistLower.includes(a.toLowerCase()))) {
-      cluster = clusters.westPop;
-    } else if (clusters.indoRock.some((a) => artistLower.includes(a.toLowerCase()))) {
-      cluster = clusters.indoRock;
+    // Step 1: Direct InnerTube Radio if videoId is known
+    if (videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+      radioTracks = await fetchInnerTubeRadio(videoId);
     }
 
-    // Pick 2 target related artists that are distinct from current
-    const distinct = cluster.filter((a) => !artistLower.includes(a.toLowerCase()));
-    const shuffled = [...distinct].sort(() => 0.5 - Math.random());
-    const selected = shuffled.slice(0, 2);
-    const recSearchQuery = `${selected.join(' ')} popular hits`;
+    // Step 2: If no videoId or radioTracks is empty, resolve videoId from artist & title or query
+    if (!radioTracks.length && (artist || title || rawQ)) {
+      const probeQuery = rawQ || `${artist} ${title}`.trim();
+      const ytCandidates = await searchYouTubeMusic(`${probeQuery} official audio`);
+      if (ytCandidates.length > 0) {
+        videoId = ytCandidates[0].videoId;
+        radioTracks = await fetchInnerTubeRadio(videoId);
+      }
+    }
 
-    // Fast internal search (skips slow lyric-probing Wave 2)
-    const internalUrl = `http://127.0.0.1:${PORT}/api/search?q=${encodeURIComponent(recSearchQuery)}&mode=${mode}&fast=1`;
-    const searchRes = await fetch(internalUrl);
-    const data = await searchRes.json();
+    // Step 3: Dynamic Catalog Fallback if InnerTube returned no tracks
+    if (!radioTracks.length) {
+      const seedName = artist || rawQ || 'Pop Hits';
+      // Search for genuine related mixes/hits based on the ACTUAL artist or query
+      const recSearchQuery = `${seedName} mix popular hits`;
+      const internalUrl = `http://127.0.0.1:${PORT}/api/search?q=${encodeURIComponent(recSearchQuery)}&mode=${mode}&fast=1`;
+      const searchRes = await fetch(internalUrl);
+      const data = await searchRes.json();
+      radioTracks = data.results || [];
+    }
 
-    // Clean and filter out current song
-    const cleanResults = (data.results || []).filter((t) => {
+    // Step 4: Deduplicate & filter out exact current track
+    const cleanResults = radioTracks.filter((t) => {
       if (!t || !t.title) return false;
-      if (title && t.title.toLowerCase().includes(title.toLowerCase().slice(0, 7))) return false;
+      if (title && t.title.toLowerCase().trim() === title.toLowerCase().trim()) return false;
       return true;
     });
 
-    const finalResults = cleanResults.slice(0, 14);
+    // Step 5: Randomize / Shuffle if requested or to ensure high discovery variety
+    let finalResults = cleanResults;
+    if (shouldShuffle || cleanResults.length > 25) {
+      // Keep seed-adjacent tracks nearby, but shuffle the broader pool
+      const top3 = cleanResults.slice(0, 3);
+      const rest = cleanResults.slice(3).sort(() => 0.5 - Math.random());
+      finalResults = [...top3, ...rest];
+    }
+
+    finalResults = finalResults.slice(0, 45);
+
+    // Step 6: Pre-warm head chunks (256 KB RAM) for top 6 upcoming radio tracks
     enqueuePrewarm(
       finalResults.slice(0, 6).map((t) => ({
         videoId: t.ytVideoId || '',
@@ -1329,9 +1396,10 @@ app.get('/api/recommendations', async (req, res) => {
 
     res.json({
       success: true,
+      seedVideoId: videoId,
       seedArtist: artist,
       seedTitle: title,
-      clusterFound: selected,
+      source: 'innertube_radio',
       count: finalResults.length,
       results: finalResults
     });

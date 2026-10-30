@@ -354,17 +354,31 @@ export async function apiGetSpotifyPlaylistTracks(playlistId) {
 }
 
 /**
- * Smart Infinite Auto-Play / Radio Recommendations
+ * Smart Infinite Auto-Play / Real Algorithmic Song Radio
+ * Seeded by videoId, artist, title, or search query
  */
-export async function apiGetRecommendations(artist, title, mode = 'spotify') {
+export async function apiGetRecommendations(
+  artist = '',
+  title = '',
+  mode = 'spotify',
+  videoId = '',
+  shuffle = false,
+  q = ''
+) {
   const base = getStudioServerUrl();
   try {
+    const params = new URLSearchParams();
+    if (artist) params.set('artist', artist);
+    if (title) params.set('title', title);
+    if (mode) params.set('mode', mode);
+    if (videoId) params.set('videoId', videoId);
+    if (shuffle) params.set('shuffle', '1');
+    if (q) params.set('q', q);
+
     const res = await fetchWithTimeout(
-      `${base}/api/recommendations?artist=${encodeURIComponent(artist || '')}&title=${encodeURIComponent(
-        title || ''
-      )}&mode=${mode}`,
+      `${base}/api/recommendations?${params.toString()}`,
       {},
-      base ? 4500 : 8000
+      base ? 5500 : 9000
     );
     if (res.ok) {
       const data = await res.json();
@@ -381,5 +395,6 @@ export async function apiGetRecommendations(artist, title, mode = 'spotify') {
   } catch {}
 
   // Fallback direct cloud
-  return apiSearchTracks(`${artist || 'Tulus'} popular hits`, mode);
+  const fallbackQuery = artist || q || 'Popular Hits';
+  return apiSearchTracks(`${fallbackQuery} popular hits`, mode);
 }

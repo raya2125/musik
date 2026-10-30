@@ -709,6 +709,37 @@ export default function App() {
 
     if (isShuffle) {
       const unplayed = activeList.filter((t) => t.id !== currentTrack?.id);
+
+      // Infinite Dynamic Shuffle: when pool has <= 2 tracks remaining, auto-pull new radio songs!
+      if (isAutoRadio && unplayed.length <= 2 && currentTrack && !isExtendingQueue) {
+        setIsExtendingQueue(true);
+        try {
+          const rec = await apiGetRecommendations(
+            currentTrack.artist,
+            currentTrack.title,
+            sourceMode,
+            currentTrack.ytVideoId,
+            true
+          );
+          if (rec?.results?.length) {
+            const existingIds = new Set(activeList.map((t) => t.id));
+            const newTracks = rec.results.filter((t) => !existingIds.has(t.id));
+            if (newTracks.length > 0) {
+              setTracks((prev) => [...prev, ...newTracks]);
+              const combinedPool = [...unplayed, ...newTracks];
+              const rand = combinedPool[Math.floor(Math.random() * combinedPool.length)];
+              setIsExtendingQueue(false);
+              playTrack(rand);
+              return;
+            }
+          }
+        } catch (e) {
+          console.error('Shuffle auto-extension error:', e);
+        } finally {
+          setIsExtendingQueue(false);
+        }
+      }
+
       const pool = unplayed.length ? unplayed : activeList;
       const rand = pool[Math.floor(Math.random() * pool.length)];
       playTrack(rand);
@@ -722,7 +753,12 @@ export default function App() {
       if (!isExtendingQueue && currentTrack) {
         setIsExtendingQueue(true);
         try {
-          const rec = await apiGetRecommendations(currentTrack.artist, currentTrack.title, sourceMode);
+          const rec = await apiGetRecommendations(
+            currentTrack.artist,
+            currentTrack.title,
+            sourceMode,
+            currentTrack.ytVideoId
+          );
           if (rec?.results?.length) {
             const existingIds = new Set(activeList.map((t) => t.id));
             const newTracks = rec.results.filter((t) => !existingIds.has(t.id));
@@ -743,6 +779,70 @@ export default function App() {
 
     const nextIdx = idx >= 0 && idx + 1 < activeList.length ? idx + 1 : 0;
     playTrack(activeList[nextIdx]);
+  };
+
+  const startRadioFromSearch = async () => {
+    const seedTrack = tracks[0];
+    if (!seedTrack && !searchQuery.trim()) return;
+    setIsLoading(true);
+    const seedName = searchQuery.trim() || seedTrack?.title;
+    setSyncToast(`Menyiapkan Radio Acak: "${seedName}"...`);
+    try {
+      const rec = await apiGetRecommendations(
+        seedTrack?.artist || searchQuery,
+        seedTrack?.title || '',
+        sourceMode,
+        seedTrack?.ytVideoId || '',
+        true,
+        searchQuery
+      );
+      if (rec?.results?.length) {
+        const pool = [...rec.results];
+        const shuffled = pool.sort(() => 0.5 - Math.random());
+        const first = seedTrack || shuffled[0];
+        const finalQueue = [first, ...shuffled.filter((t) => t.id !== first.id)];
+        setTracks(finalQueue);
+        setActiveFeedTitle(`Radio Acak: ${seedName}`);
+        setIsShuffle(true);
+        await playTrack(first);
+        setSyncToast(`Radio Acak Aktif: ${finalQueue.length} lagu serupa siap diputar!`);
+        setTimeout(() => setSyncToast(null), 3500);
+      } else if (tracks.length > 0) {
+        setIsShuffle(true);
+        const rand = tracks[Math.floor(Math.random() * tracks.length)];
+        await playTrack(rand);
+      }
+    } catch (e) {
+      console.error('Start radio error:', e);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const startSongRadio = async (track) => {
+    if (!track) return;
+    setSyncToast(`Memulai Radio Lagu: "${track.title}"...`);
+    playTrack(track);
+    try {
+      const rec = await apiGetRecommendations(
+        track.artist,
+        track.title,
+        sourceMode,
+        track.ytVideoId,
+        true
+      );
+      if (rec?.results?.length) {
+        const pool = rec.results.filter((t) => t.id !== track.id);
+        const shuffled = pool.sort(() => 0.5 - Math.random());
+        const finalQueue = [track, ...shuffled];
+        setTracks(finalQueue);
+        setActiveFeedTitle(`Radio Lagu: ${track.title} (${track.artist})`);
+        setSyncToast(`Radio Aktif: ${finalQueue.length} lagu serupa siap berputar!`);
+        setTimeout(() => setSyncToast(null), 3500);
+      }
+    } catch (e) {
+      console.error('Radio fetch error:', e);
+    }
   };
 
   const playPrev = () => {
@@ -879,7 +979,12 @@ export default function App() {
       idx >= activeList.length - 3
     ) {
       setIsExtendingQueue(true);
-      apiGetRecommendations(currentTrack.artist, currentTrack.title, sourceMode)
+      apiGetRecommendations(
+        currentTrack.artist,
+        currentTrack.title,
+        sourceMode,
+        currentTrack.ytVideoId
+      )
         .then((rec) => {
           if (rec?.results?.length) {
             setTracks((prev) => {
@@ -2101,12 +2206,25 @@ export default function App() {
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-3">
                     {activeDisplayedTracks.length > 0 && (
-                      <button
-                        onClick={() => playTrack(activeDisplayedTracks[0])}
-                        className={`w-11 h-11 rounded-full flex items-center justify-center shadow-xl hover:scale-105 active:scale-95 transition-all ${accentBg}`}
-                      >
-                        <Play className="w-5 h-5 fill-current ml-0.5" />
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => playTrack(activeDisplayedTracks[0])}
+                          className={`w-11 h-11 rounded-full flex items-center justify-center shadow-xl hover:scale-105 active:scale-95 transition-all ${accentBg}`}
+                          title="Putar Urut"
+                        >
+                          <Play className="w-5 h-5 fill-current ml-0.5" />
+                        </button>
+                        {activeView === 'discover' && (
+                          <button
+                            onClick={startRadioFromSearch}
+                            className="flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-xs font-mono font-bold text-emerald-400 hover:text-emerald-300 transition-all hover:scale-105 active:scale-95 shadow-md"
+                            title="Acak & mulai Radio 50 lagu serupa hasil pencarian ini"
+                          >
+                            <Shuffle className="w-3.5 h-3.5" />
+                            <span>Acak Radio</span>
+                          </button>
+                        )}
+                      </div>
                     )}
                     <div>
                       <h2 className="text-base sm:text-lg font-bold text-white font-mono">
@@ -2278,8 +2396,20 @@ export default function App() {
                             {track.album}
                           </div>
 
-                          {/* Actions (Heart + FLAC Download/Delete) + Duration */}
-                          <div className="flex items-center justify-end gap-2">
+                          {/* Actions (Radio + Heart + FLAC Download/Delete) + Duration */}
+                          <div className="flex items-center justify-end gap-1.5 sm:gap-2">
+                            {/* Start Song Radio */}
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                startSongRadio(track);
+                              }}
+                              title="Mulai Radio Lagu Ini (putar 50 lagu serupa)"
+                              className="p-1.5 rounded-full text-zinc-400 hover:text-emerald-400 sm:opacity-0 sm:group-hover:opacity-100 transition-all hover:scale-110"
+                            >
+                              <Radio className="w-3.5 h-3.5" />
+                            </button>
+
                             <button
                               onClick={(e) => toggleLike(track, e)}
                               title="Simpan ke Lagu Disukai"

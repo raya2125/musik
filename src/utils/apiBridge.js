@@ -3,7 +3,7 @@
 // 2. Inside Native Android APK: Connects to Studio Server (Wi-Fi/Hotspot/Tunnel) for full-track audio and conversion,
 //    and automatically falls back to Standalone Direct Cloud APIs (iTunes + LRCLIB + Offline IndexedDB) on 4G/5G!
 
-const DEFAULT_STUDIO_SERVER = 'http://10.150.197.246:3001';
+const DEFAULT_STUDIO_SERVER = 'http://192.168.71.39:3001';
 
 export function isNativeApk() {
   return (

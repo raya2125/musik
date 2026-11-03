@@ -1,54 +1,56 @@
-)
+# 🎵 Aura Music Studio
 
-Aplikasi pemutar musik yang menggabungkan pencarian katalog **Spotify** dan **YouTube Music**, pemutaran file lokal **FLAC/WAV PCM**, **Spotify Wrapped Sync Bridge**, serta **Pencarian berbasis Lirik**. Kualitas stream dari katalog online tidak diverifikasi sebagai lossless.
+Aplikasi pemutar musik modern yang menggabungkan pencarian katalog **Spotify** dan **YouTube Music**, pemutaran file lokal **Lossless**, **Spotify Wrapped Sync Bridge**, serta **Pencarian Cerdas berbasis Lirik**.
+
+---
+
+## 🚀 Cara Menjalankan Setelah Clone (Untuk Pengguna Baru)
+
+Bagi siapa pun yang meng-clone repository ini ke komputer mereka:
+
+```bash
+# 1. Clone repository
+git clone https://github.com/raya2125/musik.git
+cd musik
+
+# 2. Install dependensi Node.js
+npm install
+
+# 3. Pastikan Python terpasang dan install yt-dlp
+pip install yt-dlp
+
+# 4. Jalankan aplikasi (Pilih salah satu)
+# Cara A (Windows): Klik 2x file start.bat
+# Cara B (Manual):
+node server/index.js
+npm run dev
+```
+
+Buka browser di `http://localhost:5173` atau `http://localhost:3001`.
+
+---
+
+### Atau Jalankan dengan Docker (Tanpa Perlu Install Node/Python):
+```bash
+docker build -t aura-music .
+docker run -p 3001:3001 aura-music
+```
+Buka browser di `http://localhost:3001`.
 
 ---
 
 ## ✨ Fitur Unggulan
 
-1.
-   - **Spotify Mode:** Cari lagu dari katalog Spotify; audio online berasal dari stream pihak ketiga dan kualitasnya tidak dijamin lossless.
+1. **Dual Engine Mode:**
+   - **Spotify Mode:** Cari lagu dari katalog Spotify dan album resmi.
    - **YT Music Mode:** Akses lagu resmi, versi remix, akustik, dan *live sessions* dari YouTube Music tanpa batas.
-2. **Spotify Wrapped Sync Bridge (Anti-Ketinggalan Wrapped)**
-   - Setiap kali memutar lagu di mode apa pun (bahkan YT Music atau Offline), pemutaran tetap dicocokkan ke Spotify Web API & Scrobbler sehingga menit dengar & artis favoritmu **tetap terhitung 100% di Spotify Wrapped**.
-
-4. **Pencarian Cerdas Berbasis Lirik (Neural Lyric Search)**
-   - Cukup ketik potongan lirik yang kamu ingat (misal: *"ku kira kita akan bersama"* atau *"sial sialnya ku bertemu"*), sistem otomatis menemukan judul lagunya secara tepat dan menampilkan tombol **`▶ Putar di mm:ss`** langsung ke detik lirik tersebut dinyanyikan.
-5. **Simpan Audio Offline**
-   - Simpan audio untuk pemutaran offline. Mengubah stream online menjadi wadah FLAC tidak menambah detail yang hilang dari sumber.
-6. **Lirik Karaoke Real-Time (Live Synced Lyrics)**
-   - Lirik lagu sinkron otomatis baris demi baris mengikuti detik nyanyian penyanyi ala Apple Music / Spotify.
-7. **Multi-Platform Support**
-   - **Android Native APK:** `AuraMusic-Studio.apk` (Signed Release APK).
-   - **Desktop App:** Jendela mandiri borderless tanpa tab/URL bar (`Buka-Aura-Music.bat`).
-   - **PWA (Progressive Web App):** Bisa langsung di-install di Chrome/Safari.
-
----
-
-## 🚀 Cara Menjalankan
-
-### 1. Jalankan di Desktop (Windows)
-Cukup klik ganda file:
-```cmd
-Buka-Aura-Music.bat
-```
-Atau secara manual:
-```bash
-# Terminal 1: Backend Server (Port 3001)
-node server/index.js
-
-# Terminal 2: Frontend Web App (Port 5173)
-npm run dev
-```
-
-### 2. Install di HP Android
-File APK rilis sudah siap di-install langsung:
-- File lokal: `AuraMusic-Studio.apk`
-- Langsung transfer ke HP via WhatsApp / USB / Google Drive, lalu buka dan install.
-
----
-
-## 🛠️ Tech Stack
-- **Frontend:** React 18, Tailwind CSS, Vite, Lucide Icons, Web Audio API DSP
-- **Backend:** Node.js, Express, `yt-dlp`, FFmpeg audio conversion, LRCLIB API
-- **Mobile:** Capacitor 6, Android SDK (API 34), Gradle 8.0, OpenJDK 17
+2. **Spotify Wrapped Sync Bridge:**
+   - Pemutaran tetap dicocokkan ke Spotify Web API & Scrobbler sehingga menit dengar & artis favoritmu tetap terhitung di Spotify Wrapped.
+3. **Pencarian Cerdas Berbasis Lirik (Neural Lyric Search):**
+   - Ketik potongan lirik, sistem otomatis menemukan judul lagunya secara tepat dan menyediakan tombol lompat langsung ke detik lirik tersebut dinyanyikan.
+4. **Song Radio & Infinite Mix:**
+   - Algoritma radio dinamis YouTube Music InnerTube: otomatis mengalirkan 50 lagu radio serupa yang cocok genre & mood.
+5. **Multi-Platform Support:**
+   - **Android Native APK:** `AuraMusic-Studio.apk`
+   - **Desktop App:** `start.bat` / `Buka-Aura-Music.bat`
+   - **Docker / Cloud Ready:** Siap di-deploy ke Render / VPS / Koyeb via Dockerfile.

@@ -1,0 +1,13 @@
+node_modules
+.git
+.github
+android
+flutter-mobile
+dist
+*.apk
+*.bat
+.DS_Store
+*.log
+server/.ytcache
+server/.stream-cache.json
+server/spotify-session.json

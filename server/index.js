@@ -23,9 +23,10 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = 3001;
+const PORT = process.env.PORT || 3001;
 // Official Spotify 2025/2026 compliant Loopback IP Redirect URI (no 'localhost' allowed by Spotify)
-const SPOTIFY_REDIRECT_URI = `http://127.0.0.1:${PORT}/api/spotify/callback`;
+const SPOTIFY_REDIRECT_URI =
+  process.env.SPOTIFY_REDIRECT_URI || `http://127.0.0.1:${PORT}/api/spotify/callback`;
 const SESSION_FILE = path.join(__dirname, 'spotify-session.json');
 const DISK_CACHE_FILE = path.join(__dirname, '.stream-cache.json');
 const YT_CACHE_DIR = path.join(__dirname, '.ytcache');
@@ -1789,6 +1790,39 @@ app.get('/api/spotify/wrapped-logs', (req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`AURA Studio Pro Server running on http://127.0.0.1:${PORT}`);
+/**
+ * Healthcheck endpoint for Koyeb, Docker, and monitoring
+ */
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    service: 'AURA Music Studio Engine',
+    uptime: Math.round(process.uptime()),
+    timestamp: new Date().toISOString()
+  });
+});
+
+/**
+ * Production Static Serving: Serve prebuilt Vite frontend from /dist if present
+ */
+const distPath = path.join(__dirname, '..', 'dist');
+if (fs.existsSync(distPath)) {
+  app.use(express.static(distPath));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api')) return next();
+    res.sendFile(path.join(distPath, 'index.html'));
+  });
+} else {
+  app.get('/', (req, res) => {
+    res.json({
+      status: 'online',
+      service: 'AURA Music Audio Stream Engine',
+      port: PORT,
+      timestamp: new Date().toISOString()
+    });
+  });
+}
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`AURA Studio Pro Server running on http://0.0.0.0:${PORT}`);
 });

@@ -1,0 +1,23 @@
+app: aura-music
+services:
+  - name: aura-music-service
+    type: web
+    git:
+      repository: github.com/raya2125/aura-music
+      branch: main
+    dockerfile: Dockerfile
+    instance_type: nano
+    regions:
+      - sin
+    ports:
+      - port: 3001
+        protocol: http
+    routes:
+      - path: /
+        port: 3001
+    health_checks:
+      - http:
+          path: /health
+          port: 3001
+        interval: 30
+        timeout: 5

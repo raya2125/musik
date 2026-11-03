@@ -1,4 +1,4 @@
-# AURA Music Studio 🎵 (Dual Engine & Local Lossless Playback)
+)
 
 Aplikasi pemutar musik yang menggabungkan pencarian katalog **Spotify** dan **YouTube Music**, pemutaran file lokal **FLAC/WAV PCM**, **Spotify Wrapped Sync Bridge**, serta **Pencarian berbasis Lirik**. Kualitas stream dari katalog online tidak diverifikasi sebagai lossless.
 
@@ -6,13 +6,12 @@ Aplikasi pemutar musik yang menggabungkan pencarian katalog **Spotify** dan **Yo
 
 ## ✨ Fitur Unggulan
 
-1. **Dual-Mode Engine (`Spotify Mode` ⇄ `YT Music Mode`)**
+1.
    - **Spotify Mode:** Cari lagu dari katalog Spotify; audio online berasal dari stream pihak ketiga dan kualitasnya tidak dijamin lossless.
    - **YT Music Mode:** Akses lagu resmi, versi remix, akustik, dan *live sessions* dari YouTube Music tanpa batas.
 2. **Spotify Wrapped Sync Bridge (Anti-Ketinggalan Wrapped)**
    - Setiap kali memutar lagu di mode apa pun (bahkan YT Music atau Offline), pemutaran tetap dicocokkan ke Spotify Web API & Scrobbler sehingga menit dengar & artis favoritmu **tetap terhitung 100% di Spotify Wrapped**.
-3. **Pemutaran File Lossless Lokal & 5-Band Parametric EQ**
-   - Putar file FLAC valid atau WAV PCM. File yang diimpor dipertahankan tanpa transcode; file stream online tidak diberi klaim lossless. EQ dapat mengubah sinyal audio.
+
 4. **Pencarian Cerdas Berbasis Lirik (Neural Lyric Search)**
    - Cukup ketik potongan lirik yang kamu ingat (misal: *"ku kira kita akan bersama"* atau *"sial sialnya ku bertemu"*), sistem otomatis menemukan judul lagunya secara tepat dan menampilkan tombol **`▶ Putar di mm:ss`** langsung ke detik lirik tersebut dinyanyikan.
 5. **Simpan Audio Offline**
